@@ -1,0 +1,6 @@
+fastapi>=0.110.0
+uvicorn>=0.28.0
+pydantic>=2.7.0
+pydantic-settings>=2.2.1
+resend>=0.8.0
+supabase>=2.3.4
