@@ -1,8 +1,0 @@
-fastapi>=0.110.0
-uvicorn>=0.28.0
-pydantic[email]>=2.7.0
-pydantic-settings>=2.2.1
-resend>=0.8.0
-supabase>=2.3.4
-email-validator>=2.0.0
-apscheduler>=3.10.4
