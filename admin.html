@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>First Milk Venture | Operations & Driver Hub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Include Supabase JS Client Library -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // Initialize Supabase Client
+    const SUPABASE_URL = 'https://your-project-id.supabase.co';
+    const SUPABASE_ANON_KEY = 'your-anon-public-key';
+    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Client Login Function
+    async function loginUser(email, password) {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email,
+        password: password,
+      });
+
+      if (error) {
+        alert("Login failed: " + error.message);
+      } else {
+        alert("Login successful!");
+        window.location.href = "/dashboard.html";
+      }
+    }
+
+    // Fetch Logged-in Customer Profile
+    async function getCustomerProfile() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return null;
+
+      const { data: profile } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+      return profile;
+    }
+  </script>
+</head>
+<body class="bg-gray-100 font-sans text-gray-800 min-h-screen flex flex-col">
+
+  <header class="bg-slate-900 text-white py-4 px-6 shadow-md flex justify-between items-center">
+    <div class="flex items-center space-x-3">
+      <span class="text-2xl">🚛</span>
+      <h1 class="text-xl font-bold tracking-tight text-emerald-400">First Milk Operations & Driver Hub</h1>
+    </div>
+    <span class="text-xs bg-emerald-800 text-emerald-200 px-3 py-1 rounded-full font-semibold">Phase 1-4 Operational</span>
+  </header>
+
+  <main class="max-w-7xl mx-auto p-6 space-y-8 flex-1 w-full">
+    
+    <div class="flex space-x-4 border-b border-gray-300 pb-3">
+      <button onclick="switchTab('driver')" id="tab-driver" class="px-4 py-2 font-bold text-emerald-700 border-b-2 border-emerald-700">🚚 Driver Route Dispatch</button>
+      <button onclick="switchTab('admin')" id="tab-admin" class="px-4 py-2 font-bold text-gray-500 hover:text-gray-700">⚙️ Admin Controls & Inventory</button>
+      <button onclick="switchTab('audit')" id="tab-audit" class="px-4 py-2 font-bold text-gray-500 hover:text-gray-700">📊 Structured Audit Logs</button>
+    </div>
+
+    <section id="sec-driver" class="bg-white rounded-xl shadow p-6 space-y-4">
+      <h2 class="text-xl font-bold text-gray-900">Driver Daily Route Dispatch</h2>
+      <div class="flex flex-wrap gap-4 items-center">
+        <input type="text" id="driver-key" placeholder="Enter X-Driver-Key" value="DriverMilk2026" class="px-3 py-2 border rounded text-sm w-64" />
+        <select id="zone-select" class="px-3 py-2 border rounded text-sm">
+          <option value="Zone-1">Neighborhood Zone-1</option>
+          <option value="Zone-2">Neighborhood Zone-2</option>
+        </select>
+        <button onclick="loadDriverRoutes()" class="bg-emerald-600 text-white px-4 py-2 rounded text-sm font-semibold">Fetch Route</button>
+      </div>
+
+      <div id="driver-route-list" class="space-y-3 pt-4">
+        <p class="text-gray-500 text-sm">Click 'Fetch Route' to load today's scheduled deliveries.</p>
+      </div>
+    </section>
+
+    <section id="sec-admin" class="bg-white rounded-xl shadow p-6 space-y-6 hidden">
+      <h2 class="text-xl font-bold text-gray-900">Admin Operations & Webhooks Simulator</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="border p-4 rounded-lg space-y-3 bg-gray-50">
+          <h3 class="font-bold text-emerald-800">Manual Order Dispatch Trigger</h3>
+          <p class="text-xs text-gray-600">Trigger morning order dispatches manually for testing.</p>
+          <input type="text" id="admin-key" placeholder="X-Admin-Key" value="Firstmilk3211234" class="w-full px-3 py-2 border rounded text-sm" />
+          <button onclick="triggerDispatch()" class="bg-emerald-700 text-white px-4 py-2 rounded text-sm w-full font-bold">Run Daily Dispatch Now</button>
+        </div>
+        <div class="border p-4 rounded-lg space-y-3 bg-gray-50">
+          <h3 class="font-bold text-emerald-800">Simulate Payment Webhook</h3>
+          <p class="text-xs text-gray-600">Test recurring billing webhooks (Stripe/Moyasar/HyperPay).</p>
+          <button onclick="simulatePayment()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm w-full font-bold">Simulate Payment Success Webhook</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="sec-audit" class="bg-white rounded-xl shadow p-6 hidden">
+      <h2 class="text-xl font-bold text-gray-900 mb-4">Structured System Audit Logs</h2>
+      <div id="audit-logs-container" class="bg-slate-900 text-emerald-400 p-4 rounded-lg font-mono text-xs overflow-x-auto h-64">
+        Loading audit events...
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    const API = "https://dairy-backend-9wcg.onrender.com";
+
+    function switchTab(tab) {
+      document.getElementById("sec-driver").classList.add("hidden");
+      document.getElementById("sec-admin").classList.add("hidden");
+      document.getElementById("sec-audit").classList.add("hidden");
+
+      document.getElementById("tab-driver").className = "px-4 py-2 font-bold text-gray-500 hover:text-gray-700";
+      document.getElementById("tab-admin").className = "px-4 py-2 font-bold text-gray-500 hover:text-gray-700";
+      document.getElementById("tab-audit").className = "px-4 py-2 font-bold text-gray-500 hover:text-gray-700";
+
+      document.getElementById(`sec-${tab}`).classList.remove("hidden");
+      document.getElementById(`tab-${tab}`).className = "px-4 py-2 font-bold text-emerald-700 border-b-2 border-emerald-700";
+
+      if(tab === 'audit') loadAuditLogs();
+    }
+
+    async function loadDriverRoutes() {
+      const key = document.getElementById("driver-key").value;
+      const zone = document.getElementById("zone-select").value;
+      const res = await fetch(`${API}/driver/deliveries?zone_id=${zone}`, {
+        headers: { "x-driver-key": key }
+      });
+      const data = await res.json();
+      const list = document.getElementById("driver-route-list");
+      if(!res.ok) return list.innerHTML = `<p class="text-red-500 text-sm">Error: ${data.detail}</p>`;
+      
+      list.innerHTML = data.map(d => `
+        <div class="flex items-center justify-between p-3 border rounded bg-emerald-50">
+          <div>
+            <span class="font-bold text-sm text-gray-800">Order #${d.id || 'DEMO-1'} - ${d.user_email || 'customer@example.com'}</span>
+            <p class="text-xs text-gray-500">Zone: ${d.zone_id || zone} | Date: ${d.delivery_date}</p>
+          </div>
+          <button onclick="markDelivered('${d.id}')" class="bg-emerald-600 text-white text-xs px-3 py-1.5 rounded font-bold">Mark Delivered</button>
+        </div>
+      `).join("");
+    }
+
+    async function markDelivered(id) {
+      const key = document.getElementById("driver-key").value;
+      await fetch(`${API}/driver/deliveries/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-driver-key": key },
+        body: JSON.stringify({ status: "delivered", notes: "Handed directly to customer." })
+      });
+      alert("Delivery status updated to Delivered!");
+      loadDriverRoutes();
+    }
+
+    async function triggerDispatch() {
+      const key = document.getElementById("admin-key").value;
+      const res = await fetch(`${API}/admin/generate-deliveries`, {
+        method: "POST",
+        headers: { "x-admin-key": key }
+      });
+      const data = await res.json();
+      alert(JSON.stringify(data));
+    }
+
+    async function simulatePayment() {
+      const res = await fetch(`${API}/webhooks/payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: "payment.succeeded",
+          order_id: "demo-order-1",
+          transaction_id: "TXN-" + Math.floor(Math.random()*100000),
+          amount: 150.0,
+          status: "paid"
+        })
+      });
+      const data = await res.json();
+      alert(`Webhook Response: ${JSON.stringify(data)}`);
+    }
+
+    async function loadAuditLogs() {
+      const key = document.getElementById("admin-key").value;
+      const res = await fetch(`${API}/admin/audit-logs`, {
+        headers: { "x-admin-key": key }
+      });
+      const data = await res.json();
+      document.getElementById("audit-logs-container").textContent = JSON.stringify(data, null, 2);
+    }
+  </script>
+</body>
+</html>
