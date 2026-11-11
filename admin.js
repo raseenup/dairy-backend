@@ -1,379 +1,196 @@
-const API_BASE_URL = "https://backend.firstmilkventure.com";
-
-document.addEventListener("DOMContentLoaded", () => {
-  const today = new Date().toISOString().split('T')[0];
-  const dateInput = document.getElementById("admin-date-input");
-  if (dateInput) dateInput.value = today;
-
-  checkAdminAuth();
-});
-
-function authenticateAdmin() {
-  const key = document.getElementById("staff-secret-key").value.trim();
-  const errorBox = document.getElementById("staff-error");
-  errorBox.classList.add("hidden");
-
-  if (!key) {
-    errorBox.textContent = "Please enter admin access key.";
-    errorBox.classList.remove("hidden");
-    return;
-  }
-
-  // Test admin key with backend
-  fetch(`${API_BASE_URL}/admin/drivers`, {
-    headers: { "x-admin-key": key }
-  }).then(res => {
-    if (res.ok) {
-      localStorage.setItem("admin_key", key);
-      checkAdminAuth();
-    } else {
-      errorBox.textContent = "Invalid Admin Key. Please verify and try again.";
-      errorBox.classList.remove("hidden");
-    }
-  }).catch(() => {
-    // Fallback verification if offline
-    if (key === "Firstmilk3211234" || key.length >= 6) {
-      localStorage.setItem("admin_key", key);
-      checkAdminAuth();
-    } else {
-      errorBox.textContent = "Invalid Admin Key.";
-      errorBox.classList.remove("hidden");
-    }
-  });
-}
-
-function checkAdminAuth() {
-  const key = localStorage.getItem("admin_key");
-  const loginSection = document.getElementById("staff-login-section");
-  const dashboard = document.getElementById("staff-dashboard");
-  const roleBadge = document.getElementById("staff-role-badge");
-
-  if (key) {
-    loginSection.classList.add("hidden");
-    dashboard.classList.remove("hidden");
-    roleBadge.textContent = "Category Admin";
-    loadAdminData();
-    loadAdminDeliveries();
-  } else {
-    loginSection.classList.remove("hidden");
-    dashboard.classList.add("hidden");
-    roleBadge.textContent = "Not Authenticated";
-  }
-}
-
-function handleStaffLogout() {
-  localStorage.removeItem("admin_key");
-  checkAdminAuth();
-}
-
-async function loadAdminData() {
-  const key = localStorage.getItem("admin_key");
-  try {
-    const products = await fetch(`${API_BASE_URL}/products`).then(r => r.json());
-    document.getElementById("stat-products-count").textContent = products.length;
-
-    const tableBody = document.getElementById("admin-product-table");
-    tableBody.innerHTML = products.map(p => `
-      <tr class="border-b border-gray-100 hover:bg-gray-50">
-        <td class="py-3 font-bold text-gray-900">${p.name}<span class="block font-normal text-[10px] text-gray-400">${p.description || ''}</span></td>
-        <td class="py-3">${p.unit || 'Liter'}</td>
-        <td class="py-3 font-black text-emerald-700">₹${p.price}</td>
-        <td class="py-3"><span class="px-2 py-0.5 rounded font-bold bg-emerald-100 text-emerald-800">${p.stock_quantity || 100}</span></td>
-        <td class="py-3 text-right">
-          <button onclick="deleteProduct('${p.id}')" class="text-red-500 font-bold hover:underline">Delete</button>
-        </td>
-      </tr>
-    `).join("");
-  } catch (err) {
-    console.error("Failed to load admin data:", err);
-  }
-}
-
-async function loadAdminDeliveries() {
-  const key = localStorage.getItem("admin_key");
-  const zoneId = document.getElementById("admin-zone-select").value;
-  const dateInput = document.getElementById("admin-date-input").value;
-  const container = document.getElementById("admin-deliveries-container");
-
-  container.innerHTML = `<p class="text-xs text-gray-500">Loading deliveries for ${zoneId} on ${dateInput}...</p>`;
-
-  try {
-    const res = await fetch(`${API_BASE_URL}/driver/deliveries?zone_id=${zoneId}&delivery_date=${dateInput}`, {
-      headers: { "x-driver-key": key }
-    });
-    const deliveries = await res.json();
-    const driversRes = await fetch(`${API_BASE_URL}/admin/drivers`, {
-      headers: { "x-admin-key": key }
-    }).then(r => r.json()).catch(() => []);
-
-    if (!deliveries || !deliveries.length) {
-      container.innerHTML = `<p class="text-xs text-gray-500 italic">No orders scheduled for ${zoneId} on ${dateInput}.</p>`;
-      return;
-    }
-
-    container.innerHTML = deliveries.map(d => `
-      <div class="bg-white rounded-xl border border-gray-200 p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <div class="flex items-center space-x-2">
-            <span class="font-bold text-gray-900 text-xs">Order #${d.order_number || d.id}</span>
-            <span class="text-[10px] font-bold px-2 py-0.5 rounded uppercase bg-blue-100 text-blue-800">${d.status}</span>
-          </div>
-          <p class="text-xs font-semibold text-gray-700 mt-1">Customer: <span class="text-emerald-700 font-bold">${d.user_email}</span></p>
-          <p class="text-[11px] text-gray-500">Qty: ${d.quantity} unit(s) | Current Driver: <span class="font-bold text-amber-700">${d.assigned_driver || 'Primary Driver'}</span></p>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>First Milk Venture - Admin Portal (admin.firstmilkventure.com)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 font-sans min-h-screen">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-black text-xl">🥛</div>
+                <div>
+                    <h1 class="text-base font-black text-gray-900 tracking-tight">First Milk Venture</h1>
+                    <p class="text-[10px] text-emerald-600 font-bold uppercase tracking-wider">Admin Portal (admin.firstmilkventure.com)</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-3">
+                <span id="staff-role-badge" class="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-bold uppercase">Not Authenticated</span>
+                <button onclick="handleStaffLogout()" class="text-xs text-red-600 font-bold hover:underline">Sign Out</button>
+            </div>
         </div>
-        <div class="flex items-center space-x-2">
-          <select id="assign-select-${d.id}" class="text-xs border border-gray-300 rounded-lg px-2 py-1.5 font-bold">
-            ${driversRes.map(dr => `<option value="${dr.key}" ${d.assigned_driver === dr.name ? 'selected' : ''}>${dr.name} (${dr.key})</option>`).join('')}
-          </select>
-          <button onclick="reassignOrder('${d.id}')" class="text-xs bg-slate-900 text-white font-bold px-3 py-1.5 rounded-lg hover:bg-slate-800">
-            Reassign Driver
-          </button>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Login Card -->
+        <div id="staff-login-section" class="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+            <h2 class="text-xl font-black text-gray-900 mb-2">Admin Portal Login</h2>
+            <p class="text-xs text-gray-500 mb-6">Enter your secure administrator access key.</p>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 mb-1">Admin Access Key</label>
+                    <input type="password" id="staff-secret-key" placeholder="Enter admin access key..." class="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-mono">
+                </div>
+                <div id="staff-error" class="hidden text-xs text-red-600 font-semibold bg-red-50 p-3 rounded-xl border border-red-200"></div>
+                <button onclick="authenticateAdmin()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl text-xs shadow transition-colors">
+                    Access Admin Dashboard →
+                </button>
+            </div>
         </div>
-      </div>
-    `).join("");
-  } catch (err) {
-    container.innerHTML = `<p class="text-xs text-red-500">Failed to load delivery orders.</p>`;
-  }
-}
 
-async function reassignOrder(deliveryId) {
-  const key = localStorage.getItem("admin_key");
-  const selectEl = document.getElementById(`assign-select-${deliveryId}`);
-  const driverKey = selectEl.value;
+        <!-- Dashboard Workspace -->
+        <div id="staff-dashboard" class="hidden space-y-6">
+            
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
+                    <span class="text-xs font-bold text-gray-400 block mb-1">Total Catalog Products</span>
+                    <h3 id="stat-products-count" class="text-2xl font-black text-gray-900">0</h3>
+                </div>
+                <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
+                    <span class="text-xs font-bold text-gray-400 block mb-1">Automated Dispatch Engine</span>
+                    <button onclick="triggerDailyDispatches()" class="mt-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors">
+                        ⚡ Run Morning Dispatches
+                    </button>
+                </div>
+                <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
+                    <span class="text-xs font-bold text-gray-400 block mb-1">Manage Drivers & Unique Keys</span>
+                    <button onclick="openDriverModal()" class="mt-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors">
+                        🚚 Driver Keys & Setup
+                    </button>
+                </div>
+                <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
+                    <span class="text-xs font-bold text-gray-400 block mb-1">Change Admin Key</span>
+                    <button onclick="openChangeKeyModal()" class="mt-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors">
+                        🔑 Update Admin Key
+                    </button>
+                </div>
+            </div>
 
-  try {
-    const res = await fetch(`${API_BASE_URL}/admin/deliveries/${deliveryId}/assign`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-key": key
-      },
-      body: JSON.stringify({ driver_key: driverKey })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      alert(`✅ ${data.message}`);
-      loadAdminDeliveries();
-    } else {
-      alert(`Error: ${data.detail || 'Failed to reassign driver'}`);
-    }
-  } catch (err) {
-    alert(`Network error: ${err.message}`);
-  }
-}
+            <!-- Delivery Order Reassignment & Route Management -->
+            <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                    <div>
+                        <h3 class="font-black text-gray-900 text-base">Delivery Orders & Driver Reassignment</h3>
+                        <p class="text-xs text-gray-500">Admin can reassign any delivery order to different drivers anytime.</p>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <select id="admin-zone-select" onchange="loadAdminDeliveries()" class="text-xs border border-gray-300 rounded-xl px-3 py-2 font-bold focus:outline-none">
+                            <option value="Zone-1">Zone-1</option>
+                            <option value="Zone-2">Zone-2</option>
+                        </select>
+                        <input type="date" id="admin-date-input" onchange="loadAdminDeliveries()" class="text-xs border border-gray-300 rounded-xl px-3 py-2 font-bold focus:outline-none">
+                    </div>
+                </div>
+                <div id="admin-deliveries-container" class="space-y-3">
+                    Loading deliveries...
+                </div>
+            </div>
 
-async function openDriverModal() {
-  document.getElementById("driver-modal").classList.remove("hidden");
-  loadDriversList();
-}
+            <!-- Product Inventory Management -->
+            <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h3 class="font-black text-gray-900 text-base">Product Inventory Management</h3>
+                    </div>
+                    <button onclick="openNewProductModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl">
+                        + Add New Product
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-gray-200 text-[11px] font-bold text-gray-400 uppercase">
+                                <th class="pb-3">Product Name</th>
+                                <th class="pb-3">Unit</th>
+                                <th class="pb-3">Price (₹)</th>
+                                <th class="pb-3">Stock Qty</th>
+                                <th class="pb-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="admin-product-table" class="divide-y divide-gray-100 text-xs font-medium text-gray-700"></tbody>
+                    </table>
+                </div>
+            </div>
 
-function closeDriverModal() {
-  document.getElementById("driver-modal").classList.add("hidden");
-}
-
-async function loadDriversList() {
-  const key = localStorage.getItem("admin_key");
-  const container = document.getElementById("drivers-list-admin");
-  try {
-    const res = await fetch(`${API_BASE_URL}/admin/drivers`, {
-      headers: { "x-admin-key": key }
-    });
-    const drivers = await res.json();
-    if (!drivers.length) {
-      container.innerHTML = `<p class="text-gray-400 italic">No drivers configured yet.</p>`;
-      return;
-    }
-    container.innerHTML = drivers.map(d => `
-      <div class="flex justify-between items-center bg-white p-2.5 rounded-lg border">
-        <div>
-          <span class="font-bold text-gray-900">${d.name}</span>
-          <span class="text-[11px] text-gray-500 block">Key: <code class="bg-gray-100 px-1 py-0.5 rounded font-mono font-bold text-emerald-700">${d.key}</code> | Phone: ${d.phone} | Zone: ${d.address}</span>
         </div>
-        <button onclick="deleteDriver('${d.key}')" class="text-red-500 font-bold text-xs hover:underline">Remove</button>
-      </div>
-    `).join("");
-  } catch (err) {
-    container.innerHTML = `<p class="text-red-500 text-xs">Failed to load drivers list.</p>`;
-  }
-}
+    </main>
 
-async function createNewDriver() {
-  const key = localStorage.getItem("admin_key");
-  const name = document.getElementById("new-driver-name").value.trim();
-  const driver_key = document.getElementById("new-driver-key").value.trim();
-  const phone = document.getElementById("new-driver-phone").value.trim();
-  const address = document.getElementById("new-driver-address").value.trim();
+    <!-- Modal: Add Product -->
+    <div id="product-modal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-gray-200">
+            <h3 class="font-black text-gray-900 text-base mb-4">Add New Catalog Product</h3>
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Product Name</label>
+                    <input type="text" id="new-prod-name" class="w-full px-3 py-2 border rounded-xl">
+                </div>
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Description</label>
+                    <textarea id="new-prod-desc" class="w-full px-3 py-2 border rounded-xl"></textarea>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Price (₹)</label>
+                        <input type="number" id="new-prod-price" value="50" class="w-full px-3 py-2 border rounded-xl">
+                    </div>
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Unit</label>
+                        <input type="text" id="new-prod-unit" value="Liter" class="w-full px-3 py-2 border rounded-xl">
+                    </div>
+                </div>
+                <div class="flex justify-end space-x-2 pt-4">
+                    <button onclick="closeNewProductModal()" class="px-4 py-2 border rounded-xl font-bold">Cancel</button>
+                    <button onclick="submitNewProduct()" class="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold">Save Product</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
-  if (!name || !driver_key) {
-    alert("Please provide driver name and unique secret key.");
-    return;
-  }
+    <!-- Modal: Manage Drivers & Unique Keys -->
+    <div id="driver-modal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-gray-200 space-y-4">
+            <h3 class="font-black text-gray-900 text-base">Delivery Drivers & Unique Access Keys</h3>
+            <p class="text-xs text-gray-500">Each driver is assigned a unique secret access key generated here.</p>
+            
+            <div id="drivers-list-admin" class="space-y-2 max-h-40 overflow-y-auto text-xs border p-3 rounded-xl bg-gray-50"></div>
 
-  try {
-    const res = await fetch(`${API_BASE_URL}/admin/drivers`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-key": key
-      },
-      body: JSON.stringify({ driver_key, name, phone, address })
-    });
-    if (res.ok) {
-      alert("✅ Driver and unique access key created successfully!");
-      document.getElementById("new-driver-name").value = "";
-      document.getElementById("new-driver-key").value = "";
-      document.getElementById("new-driver-phone").value = "";
-      document.getElementById("new-driver-address").value = "";
-      loadDriversList();
-    } else {
-      const err = await res.json();
-      alert(`Error: ${err.detail || 'Failed to create driver'}`);
-    }
-  } catch (err) {
-    alert(`Network error: ${err.message}`);
-  }
-}
+            <div class="border-t pt-3 space-y-2 text-xs">
+                <h4 class="font-bold text-gray-800">Add New Driver & Secret Key</h4>
+                <div class="grid grid-cols-2 gap-2">
+                    <input type="text" id="new-driver-name" placeholder="Driver Name" class="px-3 py-2 border rounded-xl">
+                    <input type="text" id="new-driver-key" placeholder="Unique Secret Key" class="px-3 py-2 border rounded-xl font-mono">
+                    <input type="text" id="new-driver-phone" placeholder="Phone Number" class="px-3 py-2 border rounded-xl">
+                    <input type="text" id="new-driver-address" placeholder="Zone / Address" class="px-3 py-2 border rounded-xl">
+                </div>
+                <button onclick="createNewDriver()" class="w-full bg-amber-600 text-white font-bold py-2.5 rounded-xl">Generate Driver & Unique Key →</button>
+            </div>
+            <div class="flex justify-end pt-2">
+                <button onclick="closeDriverModal()" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-xl font-bold text-xs">Close</button>
+            </div>
+        </div>
+    </div>
 
-async function deleteDriver(driverKey) {
-  if (!confirm("Are you sure you want to remove this driver?")) return;
-  const key = localStorage.getItem("admin_key");
-  try {
-    const res = await fetch(`${API_BASE_URL}/admin/drivers/${driverKey}`, {
-      method: "DELETE",
-      headers: { "x-admin-key": key }
-    });
-    if (res.ok) {
-      loadDriversList();
-    } else {
-      alert("Failed to remove driver.");
-    }
-  } catch (err) {
-    alert(`Error: ${err.message}`);
-  }
-}
+    <!-- Modal: Change Admin Key -->
+    <div id="change-key-modal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-gray-200 space-y-4 text-xs">
+            <h3 class="font-black text-gray-900 text-base">Update Admin Access Key</h3>
+            <div>
+                <label class="block font-bold text-gray-700 mb-1">New Admin Secret Key</label>
+                <input type="password" id="new-admin-key-input" placeholder="Enter new admin key..." class="w-full px-3 py-2 border rounded-xl font-mono">
+            </div>
+            <div class="flex justify-end space-x-2 pt-2">
+                <button onclick="closeChangeKeyModal()" class="px-4 py-2 border rounded-xl font-bold">Cancel</button>
+                <button onclick="submitNewAdminKey()" class="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold">Update Key</button>
+            </div>
+        </div>
+    </div>
 
-function openChangeKeyModal() {
-  document.getElementById("change-key-modal").classList.remove("hidden");
-  document.getElementById("new-admin-key-input").value = "";
-}
-
-function closeChangeKeyModal() {
-  document.getElementById("change-key-modal").classList.add("hidden");
-}
-
-async function submitNewAdminKey() {
-  const currentKey = localStorage.getItem("admin_key");
-  const newKey = document.getElementById("new-admin-key-input").value.trim();
-
-  if (!newKey || newKey.length < 6) {
-    alert("New admin key must be at least 6 characters long.");
-    return;
-  }
-
-  try {
-    const res = await fetch(`${API_BASE_URL}/admin/key`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-key": currentKey
-      },
-      body: JSON.stringify({ new_admin_key: newKey })
-    });
-    if (res.ok) {
-      alert("✅ Admin access key successfully updated! Please log in with your new key.");
-      localStorage.setItem("admin_key", newKey);
-      closeChangeKeyModal();
-    } else {
-      const err = await res.json();
-      alert(`Error: ${err.detail || 'Failed to update admin key'}`);
-    }
-  } catch (err) {
-    alert(`Network error: ${err.message}`);
-  }
-}
-
-function openNewProductModal() {
-  document.getElementById("product-modal").classList.remove("hidden");
-}
-
-function closeNewProductModal() {
-  document.getElementById("product-modal").classList.add("hidden");
-}
-
-async function submitNewProduct() {
-  const key = localStorage.getItem("admin_key");
-  const name = document.getElementById("new-prod-name").value.trim();
-  const description = document.getElementById("new-prod-desc").value.trim();
-  const price = parseFloat(document.getElementById("new-prod-price").value);
-  const unit = document.getElementById("new-prod-unit").value.trim();
-
-  if (!name || isNaN(price)) {
-    alert("Please provide valid product name and price.");
-    return;
-  }
-
-  try {
-    const res = await fetch(`${API_BASE_URL}/admin/products`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-key": key
-      },
-      body: JSON.stringify({ name, description, price, unit })
-    });
-    if (res.ok) {
-      alert("Product added successfully!");
-      closeNewProductModal();
-      loadAdminData();
-    } else {
-      const err = await res.json();
-      alert(`Error: ${err.detail || 'Failed to create product'}`);
-    }
-  } catch (err) {
-    alert(`Network error: ${err.message}`);
-  }
-}
-
-async function deleteProduct(productId) {
-  if (!confirm("Are you sure you want to delete this product?")) return;
-  const key = localStorage.getItem("admin_key");
-  try {
-    const res = await fetch(`${API_BASE_URL}/admin/products/${productId}`, {
-      method: "DELETE",
-      headers: { "x-admin-key": key }
-    });
-    if (res.ok) {
-      loadAdminData();
-    } else {
-      alert("Failed to delete product.");
-    }
-  } catch (err) {
-    alert(`Error: ${err.message}`);
-  }
-}
-
-async function triggerDailyDispatches() {
-  const key = localStorage.getItem("admin_key");
-  const targetDate = prompt("Enter target dispatch date (YYYY-MM-DD):", new Date().toISOString().split('T')[0]);
-  if (!targetDate) return;
-
-  try {
-    const res = await fetch(`${API_BASE_URL}/admin/generate-deliveries`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-key": key
-      },
-      body: JSON.stringify({ target_date: targetDate })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      alert(`✅ Successfully generated deliveries for ${targetDate}!`);
-      loadAdminDeliveries();
-    } else {
-      alert(`Error: ${data.detail || 'Failed to generate deliveries'}`);
-    }
-  } catch (err) {
-    alert(`Network error: ${err.message}`);
-  }
-}
+    <script src="admin.js"></script>
+</body>
+</html>
