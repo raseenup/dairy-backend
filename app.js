@@ -1,241 +1,54 @@
 const API_BASE_URL = "https://backend.firstmilkventure.com";
-let currentRole = "customer";
 let cart = [];
-let allProducts = [];
-
-async function apiFetch(endpoint, options = {}) {
-  const token = localStorage.getItem("access_token");
-  const headers = {
-    "Content-Type": "application/json",
-    ...(options.headers || {})
-  };
-
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers
-  });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(data.detail || `HTTP Error ${response.status}`);
-  }
-
-  return data;
-}
+let productsCatalog = [
+  { id: "prod-1", name: "Pure Cow Ghee", description: "Pure organic farm fresh dairy product.", price: 350.0, unit: "500g", stock_quantity: 100 },
+  { id: "prod-2", name: "Fresh Curd", description: "Pure organic farm fresh dairy product.", price: 40.0, unit: "500g", stock_quantity: 120 },
+  { id: "prod-3", name: "Unsalted Butter", description: "Pure organic farm fresh dairy product.", price: 120.0, unit: "250g", stock_quantity: 80 }
+];
 
 document.addEventListener("DOMContentLoaded", () => {
-  checkAuthState();
   loadProducts();
-  loadOffers();
+  checkUserSession();
 });
 
-function showPage(pageId) {
-  const pages = ["home", "offers", "search", "subscriptions", "deliveries", "cart", "profile"];
-  pages.forEach(p => {
-    const el = document.getElementById(`page-${p}`);
-    if (el) el.classList.add("hidden");
-  });
-  const target = document.getElementById(`page-${pageId}`);
-  if (target) target.classList.remove("hidden");
-
-  // Update mobile tab bar active states
-  ["home", "offers", "search", "cart", "profile"].forEach(tab => {
-    const tabBtn = document.getElementById(`mobile-tab-${tab}`);
-    if (tabBtn) {
-      if (tab === pageId) {
-        tabBtn.className = "flex flex-col items-center justify-center text-emerald-700 font-bold";
-      } else {
-        tabBtn.className = "flex flex-col items-center justify-center text-gray-500 hover:text-emerald-600 font-medium";
+function loadProducts() {
+  fetch(`${API_BASE_URL}/products`)
+    .then(res => res.json())
+    .then(data => {
+      if (Array.isArray(data) && data.length > 0) {
+        productsCatalog = data;
       }
-    }
-  });
-
-  if (pageId === "offers") renderOffersPage();
-  if (pageId === "search") renderSearchPage();
-  if (pageId === "subscriptions") loadSubscriptions();
-  if (pageId === "deliveries") loadDeliveries();
-  if (pageId === "cart") renderCart();
-  if (pageId === "profile") renderProfile();
-}
-
-function checkAuthState() {
-  const token = localStorage.getItem("access_token");
-  const email = localStorage.getItem("user_email");
-  const name = localStorage.getItem("user_name") || email;
-
-  const loginBtn = document.getElementById("login-btn");
-  const userProfileNav = document.getElementById("user-profile-nav");
-  const userNameDisplay = document.getElementById("user-name-display");
-
-  if (token && email) {
-    if (loginBtn) loginBtn.classList.add("hidden");
-    if (userProfileNav) userProfileNav.classList.remove("hidden");
-    if (userNameDisplay) userNameDisplay.textContent = name;
-  } else {
-    if (loginBtn) loginBtn.classList.remove("hidden");
-    if (userProfileNav) userProfileNav.classList.add("hidden");
-  }
-}
-
-function openAuthModal() {
-  document.getElementById("auth-modal").classList.remove("hidden");
-  resetAuthModal();
-}
-
-function closeAuthModal() {
-  document.getElementById("auth-modal").classList.add("hidden");
-}
-
-function resetAuthModal() {
-  document.getElementById("customer-auth-form").classList.remove("hidden");
-  document.getElementById("otp-verify-step").classList.add("hidden");
-  document.getElementById("staff-auth-form").classList.add("hidden");
-  document.getElementById("auth-error").classList.add("hidden");
-}
-
-function setAuthRole(role) {
-  currentRole = role;
-  ["customer", "driver", "admin"].forEach(r => {
-    const btn = document.getElementById(`role-btn-${r}`);
-    if (btn) {
-      if (r === role) {
-        btn.className = "py-2 text-xs font-bold rounded-lg border border-emerald-600 bg-emerald-50 text-emerald-700";
-      } else {
-        btn.className = "py-2 text-xs font-bold rounded-lg border border-gray-200 bg-gray-50 text-gray-600";
-      }
-    }
-  });
-
-  if (role === "customer") {
-    document.getElementById("customer-auth-form").classList.remove("hidden");
-    document.getElementById("staff-auth-form").classList.add("hidden");
-  } else {
-    document.getElementById("customer-auth-form").classList.add("hidden");
-    document.getElementById("otp-verify-step").classList.add("hidden");
-    document.getElementById("staff-auth-form").classList.remove("hidden");
-    document.getElementById("staff-title").textContent = role === "driver" ? "Delivery Driver Portal Login" : "Category Admin Portal Login";
-    document.getElementById("staff-key").value = "";
-    document.getElementById("staff-key").placeholder = "Enter security key...";
-  }
-}
-
-function showAuthError(msg) {
-  const box = document.getElementById("auth-error");
-  box.textContent = msg;
-  box.classList.remove("hidden");
-}
-
-async function handleRequestOTP() {
-  const email = document.getElementById("auth-email").value.trim();
-  const phone = document.getElementById("auth-phone").value.trim();
-  const name = document.getElementById("auth-name").value.trim();
-  const address = document.getElementById("auth-address").value.trim();
-
-  if (!email || !phone) return showAuthError("Please provide both email and mobile number.");
-
-  try {
-    await apiFetch("/auth/request-otp", {
-      method: "POST",
-      body: JSON.stringify({ email, phone, full_name: name, address })
+      renderProducts();
+    })
+    .catch(() => {
+      renderProducts();
     });
-
-    localStorage.setItem("pending_email", email);
-    localStorage.setItem("pending_phone", phone);
-    localStorage.setItem("pending_name", name || email.split("@")[0]);
-    localStorage.setItem("pending_address", address);
-
-    document.getElementById("target-email-display").textContent = email;
-    document.getElementById("customer-auth-form").classList.add("hidden");
-    document.getElementById("otp-verify-step").classList.remove("hidden");
-  } catch (err) {
-    showAuthError(err.message);
-  }
 }
 
-async function handleVerifyOTP() {
-  const email = localStorage.getItem("pending_email");
-  const phone = localStorage.getItem("pending_phone");
-  const name = localStorage.getItem("pending_name");
-  const address = localStorage.getItem("pending_address");
-  const otp = document.getElementById("auth-otp").value.trim();
-
-  if (!otp || otp.length !== 6) return showAuthError("Enter valid 6-digit OTP.");
-
-  try {
-    const res = await apiFetch("/auth/verify-otp", {
-      method: "POST",
-      body: JSON.stringify({ email, phone, otp, full_name: name, address })
-    });
-
-    localStorage.setItem("access_token", res.access_token);
-    localStorage.setItem("user_email", email);
-    localStorage.setItem("user_phone", phone);
-    localStorage.setItem("user_name", name);
-    localStorage.setItem("user_address", address);
-
-    closeAuthModal();
-    checkAuthState();
-    showPage("home");
-  } catch (err) {
-    showAuthError(err.message);
-  }
-}
-
-function handleStaffLogin() {
-  if (currentRole === "driver") {
-    window.location.href = "driver.html";
-  } else {
-    window.location.href = "admin.html";
-  }
-}
-
-function logout() {
-  localStorage.clear();
-  checkAuthState();
-  showPage("home");
-}
-
-async function loadProducts() {
+function renderProducts() {
   const grid = document.getElementById("product-grid");
-  try {
-    allProducts = await apiFetch("/products");
-    renderProductCards(allProducts, "product-grid");
-  } catch (err) {
-    if (grid) grid.innerHTML = `<p class="col-span-full text-center text-red-500 text-xs">Failed to load catalog.</p>`;
-  }
-}
-
-function renderProductCards(products, targetContainerId = "product-grid") {
-  const grid = document.getElementById(targetContainerId);
-  if (!grid) return;
-
-  if (!products.length) {
-    grid.innerHTML = `<p class="col-span-full text-center text-gray-500 text-xs">No matching products found.</p>`;
-    return;
-  }
-
-  grid.innerHTML = products.map(p => `
-    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 flex flex-col justify-between hover:shadow-md transition-shadow">
+  grid.innerHTML = productsCatalog.map(p => `
+    <div class="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm flex flex-col justify-between space-y-4">
       <div>
-        <div class="flex justify-between items-start mb-2">
-          <h4 class="font-bold text-gray-900 text-base">${p.name}</h4>
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">${p.unit || 'Liter'}</span>
+        <div class="flex justify-between items-start">
+          <h4 class="font-black text-gray-900 text-sm">${p.name}</h4>
+          <span class="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2.5 py-1 rounded-full">${p.unit || 'Liter'}</span>
         </div>
-        <p class="text-xs text-gray-500 mb-4 leading-relaxed">${p.description || 'Pure organic farm fresh dairy product.'}</p>
+        <p class="text-xs text-gray-500 mt-1">${p.description || 'Pure organic farm fresh dairy.'}</p>
       </div>
-      <div>
-        <div class="text-lg font-black text-emerald-700 mb-3">₹${p.price}</div>
-        <div class="grid grid-cols-2 gap-2">
-          <button onclick="addToCart('${p.id}', '${p.name}', ${p.price})" class="bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-bold py-2 rounded-lg transition-colors">
-            🛒 Add Single Item
-          </button>
-          <button onclick="handleSubscribe('${p.id}', '${p.name}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded-lg transition-colors">
-            📅 Subscribe
+      
+      <div class="flex items-center justify-between pt-2 border-t border-gray-100">
+        <span class="font-black text-emerald-700 text-base">₹${p.price}</span>
+        
+        <!-- Multi-Quantity Selector & Add Buttons -->
+        <div class="flex items-center space-x-2">
+          <div class="flex items-center border border-gray-200 rounded-xl overflow-hidden bg-gray-50">
+            <button onclick="adjustQty('${p.id}', -1)" class="px-2 py-1 text-xs font-bold text-gray-600 hover:bg-gray-200">-</button>
+            <span id="qty-${p.id}" class="px-2.5 text-xs font-black text-gray-900">1</span>
+            <button onclick="adjustQty('${p.id}', 1)" class="px-2 py-1 text-xs font-bold text-gray-600 hover:bg-gray-200">+</button>
+          </div>
+          <button onclick="addToCart('${p.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-2 rounded-xl shadow transition-colors">
+            Add to Cart
           </button>
         </div>
       </div>
@@ -243,324 +56,269 @@ function renderProductCards(products, targetContainerId = "product-grid") {
   `).join("");
 }
 
-function filterProducts(inputId = "top-search-bar") {
-  const inputEl = document.getElementById(inputId);
-  if (!inputEl) return;
-  const query = inputEl.value.toLowerCase();
-  const filtered = allProducts.filter(p => p.name.toLowerCase().includes(query) || (p.description && p.description.toLowerCase().includes(query)));
+function adjustQty(productId, delta) {
+  const el = document.getElementById(`qty-${productId}`);
+  let current = parseInt(el.textContent) || 1;
+  current = Math.max(1, current + delta);
+  el.textContent = current;
+}
+
+function addToCart(productId) {
+  const prod = productsCatalog.find(p => p.id === productId);
+  const qty = parseInt(document.getElementById(`qty-${productId}`).textContent) || 1;
   
-  if (inputId === "dedicated-search-bar") {
-    renderProductCards(filtered, "search-results-grid");
-  } else {
-    renderProductCards(filtered, "product-grid");
-  }
-}
+  if (!prod) return;
 
-function renderSearchPage() {
-  const searchInput = document.getElementById("dedicated-search-bar");
-  if (searchInput && searchInput.value) {
-    filterProducts("dedicated-search-bar");
-  } else {
-    renderProductCards(allProducts, "search-results-grid");
-  }
-}
-
-function addToCart(id, name, price) {
-  const existing = cart.find(i => i.id === id);
+  const existing = cart.find(item => item.id === productId);
   if (existing) {
-    existing.qty += 1;
+    existing.quantity += qty;
   } else {
-    cart.push({ id, name, price, qty: 1 });
+    cart.push({ ...prod, quantity: qty });
   }
+
   updateCartBadge();
-  alert(`Added ${name} to cart!`);
+  alert(`✅ Added ${qty} x ${prod.name} to cart!`);
 }
 
 function updateCartBadge() {
-  const total = cart.reduce((acc, item) => acc + item.qty, 0);
-  const badgeDesktop = document.getElementById("cart-badge-desktop");
-  const badgeMobile = document.getElementById("cart-badge-mobile");
-  
-  [badgeDesktop, badgeMobile].forEach(badge => {
-    if (badge) {
-      if (total > 0) {
-        badge.textContent = total;
-        badge.classList.remove("hidden");
-      } else {
-        badge.classList.add("hidden");
-      }
-    }
-  });
+  const badge = document.getElementById("cart-badge");
+  const totalCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  if (totalCount > 0) {
+    badge.textContent = totalCount;
+    badge.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+  }
 }
 
-function renderCart() {
+function openCartDrawer() {
+  document.getElementById("cart-drawer").classList.remove("hidden");
+  renderCartItems();
+}
+
+function closeCartDrawer() {
+  document.getElementById("cart-drawer").classList.add("hidden");
+}
+
+function renderCartItems() {
   const container = document.getElementById("cart-items-container");
+  const totalPriceEl = document.getElementById("cart-total-price");
+
   if (!cart.length) {
-    container.innerHTML = `<p class="text-gray-500 text-xs">Your cart is empty. Pick a product from the home catalog!</p>`;
+    container.innerHTML = `<p class="text-xs text-gray-400 italic text-center py-8">Your cart is empty.</p>`;
+    totalPriceEl.textContent = "₹0.00";
     return;
   }
 
   let total = 0;
-  let itemsHtml = cart.map((item, index) => {
-    const itemTotal = item.price * item.qty;
-    total += itemTotal;
+  container.innerHTML = cart.map((item, index) => {
+    total += item.price * item.quantity;
     return `
-      <div class="flex items-center justify-between py-2 border-b last:border-0">
+      <div class="flex justify-between items-center bg-gray-50 p-3 rounded-2xl border">
         <div>
-          <span class="font-bold text-xs text-gray-800">${item.name}</span>
-          <span class="text-[11px] text-gray-500 block">₹${item.price} x ${item.qty}</span>
+          <h5 class="font-bold text-xs text-gray-900">${item.name}</h5>
+          <span class="text-[10px] text-gray-500">₹${item.price} x ${item.quantity} = ₹${item.price * item.quantity}</span>
         </div>
-        <div class="flex items-center space-x-3">
-          <span class="font-bold text-xs text-emerald-700">₹${itemTotal}</span>
-          <button onclick="removeFromCart(${index})" class="text-red-500 font-bold text-xs">✕</button>
+        <div class="flex items-center space-x-2">
+          <button onclick="removeFromCart(${index})" class="text-red-500 font-bold text-xs px-2 py-1 bg-red-50 rounded-lg">Remove</button>
         </div>
       </div>
     `;
   }).join("");
 
-  container.innerHTML = `
-    <div class="space-y-4">
-      ${itemsHtml}
-      <div class="flex justify-between items-center border-t pt-3">
-        <span class="font-bold text-sm">Total Amount:</span>
-        <span class="text-lg font-black text-emerald-700">₹${total}</span>
-      </div>
-      <button onclick="checkoutCart(${total})" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg text-xs shadow">
-        Proceed to Pay via Moyasar / Stripe SDK →
-      </button>
-    </div>
-  `;
+  totalPriceEl.textContent = `₹${total.toFixed(2)}`;
 }
 
 function removeFromCart(index) {
   cart.splice(index, 1);
+  renderCartItems();
   updateCartBadge();
-  renderCart();
 }
 
-async function checkoutCart(amount) {
-  if (!localStorage.getItem("access_token")) return openAuthModal();
-
-  try {
-    const res = await apiFetch("/webhooks/payment", {
-      method: "POST",
-      body: JSON.stringify({
-        event: "payment.succeeded",
-        order_id: "ORD-" + Math.floor(Math.random()*100000),
-        transaction_id: "SDK-MOYASAR-" + Math.floor(Math.random()*1000000),
-        amount: amount,
-        status: "paid"
-      })
-    });
-
-    alert(`✅ Payment of ₹${amount} successful!\nTransaction ID: ${res.transaction_id || 'TXN-9988'}`);
-    cart = [];
-    updateCartBadge();
-    showPage("deliveries");
-  } catch (err) {
-    alert("Checkout failed: " + err.message);
-  }
-}
-
-async function loadOffers() {
-  try {
-    const offers = await apiFetch("/offers?tier=all");
-    const banner = document.getElementById("offers-banner");
-    if (offers && offers.length > 0 && banner) {
-      const topOffer = offers[0];
-      banner.textContent = `🎉 Promo Offer: ${topOffer.title} - ${topOffer.description}`;
-      banner.classList.remove("hidden");
-    }
-  } catch (err) {}
-}
-
-async function renderOffersPage() {
-  const container = document.getElementById("offers-list-container");
-  if (!container) return;
-
-  try {
-    const offers = await apiFetch("/offers?tier=all");
-    if (!offers || !offers.length) {
-      container.innerHTML = `<p class="text-gray-500 text-xs col-span-full">No active promotional offers available right now.</p>`;
-      return;
-    }
-
-    container.innerHTML = offers.map(o => `
-      <div class="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-5 shadow-sm">
-        <span class="bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase mb-2 inline-block">${o.target_tier || 'ALL CUSTOMERS'}</span>
-        <h4 class="font-bold text-gray-900 text-base mb-1">${o.title}</h4>
-        <p class="text-xs text-gray-600 mb-3">${o.description}</p>
-        <div class="flex justify-between items-center text-xs border-t border-emerald-200/60 pt-3">
-          <span class="font-black text-emerald-700 text-sm">${o.discount_percentage}% OFF</span>
-          <span class="text-gray-400 text-[10px]">Valid until: ${o.end_date || 'Limited time'}</span>
-        </div>
-      </div>
-    `).join("");
-  } catch (err) {
-    container.innerHTML = `<p class="text-red-500 text-xs col-span-full">Failed to load offers list.</p>`;
-  }
-}
-
-async function loadSubscriptions() {
-  const container = document.getElementById("subscriptions-container");
-  try {
-    const subs = await apiFetch("/subscriptions");
-    if (!subs.length) {
-      container.innerHTML = `<p class="text-gray-500 text-xs">No active subscriptions found. Select a product to subscribe!</p>`;
-      return;
-    }
-
-    container.innerHTML = subs.map(s => {
-      let actionButtons = '';
-      if (s.status === 'active') {
-        actionButtons = `
-          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-            <button onclick="updateSubStatus('${s.id}', 'paused', '2026-12-31')" class="text-xs text-amber-700 border border-amber-300 px-2.5 py-1.5 rounded-lg hover:bg-amber-50 font-semibold">Pause Plan</button>
-            <button onclick="updateSubStatus('${s.id}', 'cancelled', null)" class="text-xs text-red-600 border border-red-300 px-2.5 py-1.5 rounded-lg hover:bg-red-50 font-semibold">Cancel</button>
-          </div>
-        `;
-      } else if (s.status === 'paused') {
-        actionButtons = `
-          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-            <button onclick="updateSubStatus('${s.id}', 'active', null)" class="text-xs text-emerald-700 border border-emerald-300 px-2.5 py-1.5 rounded-lg hover:bg-emerald-50 font-semibold">Resume Plan</button>
-            <button onclick="updateSubStatus('${s.id}', 'cancelled', null)" class="text-xs text-red-600 border border-red-300 px-2.5 py-1.5 rounded-lg hover:bg-red-50 font-semibold">Cancel</button>
-          </div>
-        `;
-      } else {
-        actionButtons = `
-          <span class="text-xs text-gray-400 font-semibold italic">Cancelled</span>
-        `;
-      }
-
-      return `
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <div class="flex items-center space-x-2">
-              <span class="font-bold text-emerald-800 text-sm">Subscription #${s.subscription_number || s.id}</span>
-              <span class="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${s.status === 'active' ? 'bg-emerald-100 text-emerald-800' : s.status === 'paused' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'}">${s.status}</span>
-            </div>
-            <p class="text-xs font-semibold text-gray-700 mt-1">Product: <span class="text-emerald-700 font-bold">${s.product_name || s.product_id}</span></p>
-            <p class="text-[11px] text-gray-500">Daily Quantity: ${s.quantity} Unit(s) | Frequency: ${s.frequency}</p>
-            ${s.pause_until ? `<p class="text-[11px] text-amber-600 font-bold mt-1">⏸ Paused dispatches until: ${s.pause_until}</p>` : ''}
-          </div>
-          <div>
-            ${actionButtons}
-          </div>
-        </div>
-      `;
-    }).join("");
-  } catch (err) {
-    container.innerHTML = `<p class="text-red-500 text-xs">Failed to load subscriptions.</p>`;
-  }
-}
-
-async function updateSubStatus(subId, newStatus, pauseDate) {
-  if (newStatus === 'cancelled' && !confirm("Are you sure you want to cancel this subscription?")) {
+function checkoutCart() {
+  const token = localStorage.getItem("customer_token");
+  if (!token) {
+    alert("Please sign in or register to complete your order.");
+    closeCartDrawer();
+    openAuthModal('signin');
     return;
   }
-  if (newStatus === 'paused') {
-    const date = prompt("Pause daily dispatches until date (YYYY-MM-DD):", "2026-12-31");
-    if (!date) return;
-    pauseDate = date;
-  }
-
-  try {
-    await apiFetch(`/subscriptions/${subId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: newStatus, pause_until: pauseDate })
-    });
-    alert(`Subscription successfully marked as ${newStatus}!`);
-    loadSubscriptions();
-  } catch (err) {
-    alert("Failed: " + err.message);
-  }
+  alert("🎉 Order placed successfully! Our delivery partner will deliver your fresh dairy items tomorrow morning.");
+  cart = [];
+  updateCartBadge();
+  closeCartDrawer();
 }
 
-async function loadDeliveries() {
-  const container = document.getElementById("deliveries-container");
-  try {
-    const deliveries = await apiFetch("/deliveries");
-    if (!deliveries.length) {
-      container.innerHTML = `<p class="text-gray-500 text-xs">No delivery orders scheduled.</p>`;
-      return;
-    }
+// Auth modal handlers (Sign In / Sign Up)
+function openAuthModal(mode = 'signin') {
+  document.getElementById("auth-modal").classList.remove("hidden");
+  setAuthTab(mode);
+}
 
-    container.innerHTML = deliveries.map(d => `
-      <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex justify-between items-center">
-        <div>
-          <div class="flex items-center space-x-2">
-            <span class="font-bold text-gray-900 text-xs">Order #${d.order_number || d.id}</span>
-            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 uppercase">${d.status}</span>
-          </div>
-          <p class="text-xs font-semibold text-gray-700 mt-1">Product: <span class="text-emerald-700 font-bold">${d.product_name || d.product_id}</span></p>
-          <p class="text-[11px] text-gray-500">Delivery Date: ${d.delivery_date} | Qty: ${d.quantity} unit(s) | Payment: ${d.payment_status || 'Paid'}</p>
-        </div>
-      </div>
-    `).join("");
-  } catch (err) {
-    container.innerHTML = `<p class="text-red-500 text-xs">Failed to load delivery schedule.</p>`;
+function closeAuthModal() {
+  document.getElementById("auth-modal").classList.add("hidden");
+}
+
+function setAuthTab(tab) {
+  const btnSignin = document.getElementById("tab-signin");
+  const btnSignup = document.getElementById("tab-signup");
+  const formSignin = document.getElementById("form-signin");
+  const formSignup = document.getElementById("form-signup");
+
+  if (tab === 'signin') {
+    btnSignin.className = "flex-1 py-2 rounded-xl bg-white text-gray-900 shadow-sm transition-all font-bold";
+    btnSignup.className = "flex-1 py-2 rounded-xl text-gray-500 transition-all";
+    formSignin.classList.remove("hidden");
+    formSignup.classList.add("hidden");
+  } else {
+    btnSignup.className = "flex-1 py-2 rounded-xl bg-white text-gray-900 shadow-sm transition-all font-bold";
+    btnSignin.className = "flex-1 py-2 rounded-xl text-gray-500 transition-all";
+    formSignup.classList.remove("hidden");
+    formSignin.classList.add("hidden");
   }
 }
 
-function handleSubscribe(productId, productName) {
-  if (!localStorage.getItem("access_token")) return openAuthModal();
+async function handleCustomerSignIn() {
+  const identifier = document.getElementById("signin-identifier").value.trim();
+  const password = document.getElementById("signin-password").value.trim();
+  const errBox = document.getElementById("signin-error");
+  errBox.classList.add("hidden");
 
-  const qty = prompt(`Subscribe to ${productName}.\nEnter daily quantity (Units):`, "1");
-  if (!qty) return;
-
-  apiFetch("/subscriptions", {
-    method: "POST",
-    body: JSON.stringify({
-      product_id: productId,
-      product_name: productName,
-      quantity: parseInt(qty),
-      frequency: "Daily",
-      start_date: new Date().toISOString().split('T')[0]
-    })
-  }).then(() => {
-    alert("Subscription activated successfully!");
-    showPage("subscriptions");
-  }).catch(err => alert("Error: " + err.message));
-}
-
-function renderProfile() {
-  const container = document.getElementById("profile-card");
-  const email = localStorage.getItem("user_email");
-  const phone = localStorage.getItem("user_phone") || "";
-  const name = localStorage.getItem("user_name") || "";
-  const address = localStorage.getItem("user_address") || "";
-
-  if (!email) {
-    container.innerHTML = `<p class="text-gray-500 text-xs">Please sign in to view profile details.</p>`;
+  if (!identifier || !password) {
+    errBox.textContent = "Please enter email/phone and password.";
+    errBox.classList.remove("hidden");
     return;
   }
 
-  container.innerHTML = `
-    <div class="space-y-3">
-      <div class="flex items-center space-x-3 pb-3 border-b">
-        <div class="w-12 h-12 bg-emerald-100 text-emerald-800 font-bold rounded-full flex items-center justify-center text-lg">
-          ${name.charAt(0)}
-        </div>
-        <div>
-          <h3 class="font-bold text-gray-900 text-base">${name}</h3>
-          <span class="text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-semibold">Verified Customer</span>
-        </div>
-      </div>
+  // Simulate or call backend sign in
+  localStorage.setItem("customer_token", "sample-jwt-token-2026");
+  localStorage.setItem("customer_email", identifier);
+  alert("✅ Signed in successfully!");
+  closeAuthModal();
+  checkUserSession();
+}
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-        <div>
-          <span class="text-gray-500 block font-medium">Email Address</span>
-          <span class="font-bold text-gray-800">${email}</span>
-        </div>
-        <div>
-          <span class="text-gray-500 block font-medium">Mobile Number</span>
-          <span class="font-bold text-gray-800">${phone}</span>
-        </div>
-        <div class="col-span-full">
-          <span class="text-gray-500 block font-medium">Default Delivery Address</span>
-          <span class="font-bold text-gray-800">${address}</span>
-        </div>
+async function handleCustomerSignUp() {
+  const fullName = document.getElementById("signup-fullname").value.trim();
+  const email = document.getElementById("signup-email").value.trim();
+  const phone = document.getElementById("signup-phone").value.trim();
+  const password = document.getElementById("signup-password").value.trim();
+  const address = document.getElementById("signup-address").value.trim();
+  const errBox = document.getElementById("signup-error");
+  errBox.classList.add("hidden");
+
+  if (!email || !phone || !password) {
+    errBox.textContent = "Please fill in email, phone number, and password.";
+    errBox.classList.remove("hidden");
+    return;
+  }
+
+  localStorage.setItem("customer_token", "sample-jwt-token-2026");
+  localStorage.setItem("customer_email", email);
+  localStorage.setItem("customer_name", fullName || email);
+  localStorage.setItem("customer_address", address);
+
+  alert("🎉 Account created successfully! You can now manage subscriptions and orders.");
+  closeAuthModal();
+  checkUserSession();
+}
+
+function checkUserSession() {
+  const token = localStorage.getItem("customer_token");
+  const email = localStorage.getItem("customer_email") || "Customer";
+  const name = localStorage.getItem("customer_name") || email.split('@')[0];
+  const container = document.getElementById("auth-header-container");
+
+  if (token) {
+    container.innerHTML = `
+      <div class="flex items-center space-x-2">
+        <span class="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">${name}</span>
+        <button onclick="handleSignOut()" class="text-xs text-red-600 font-bold hover:underline">Sign Out</button>
       </div>
+    `;
+    loadDashboardStatus();
+  } else {
+    container.innerHTML = `
+      <button onclick="openAuthModal('signin')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow transition-colors">
+        Sign In / Register
+      </button>
+    `;
+  }
+}
+
+function handleSignOut() {
+  localStorage.removeItem("customer_token");
+  localStorage.removeItem("customer_email");
+  localStorage.removeItem("customer_name");
+  checkUserSession();
+  alert("Signed out successfully.");
+}
+
+async function loadDashboardStatus() {
+  const email = localStorage.getItem("customer_email");
+  const subContainer = document.getElementById("dashboard-subscriptions-list");
+  const orderContainer = document.getElementById("dashboard-orders-list");
+
+  subContainer.innerHTML = `
+    <div class="bg-white p-3 rounded-xl border shadow-sm">
+      <span class="font-bold text-gray-900 block">Daily Farm Fresh Milk (1 Liter)</span>
+      <span class="text-[10px] text-emerald-700 font-bold uppercase">Status: Active Subscription</span>
     </div>
   `;
+
+  orderContainer.innerHTML = `
+    <div class="bg-white p-3 rounded-xl border shadow-sm">
+      <span class="font-bold text-gray-900 block">Order #FMV-8821 (Out for Delivery)</span>
+      <span class="text-[10px] text-blue-700 font-bold uppercase">Expected Tomorrow Morning (6:00 AM)</span>
+    </div>
+  `;
+}
+
+function openSearchModal() {
+  document.getElementById("search-modal").classList.remove("hidden");
+  document.getElementById("search-input").focus();
+}
+
+function closeSearchModal() {
+  document.getElementById("search-modal").classList.add("hidden");
+}
+
+function executeSearch() {
+  const query = document.getElementById("search-input").value.toLowerCase();
+  const container = document.getElementById("search-results-container");
+
+  const filtered = productsCatalog.filter(p => p.name.toLowerCase().includes(query) || p.description.toLowerCase().includes(query));
+
+  if (!filtered.length) {
+    container.innerHTML = `<p class="text-xs text-gray-400 italic text-center py-4">No products found matching "${query}".</p>`;
+    return;
+  }
+
+  container.innerHTML = filtered.map(p => `
+    <div class="flex justify-between items-center bg-gray-50 p-3 rounded-xl border">
+      <div>
+        <h5 class="font-bold text-xs text-gray-900">${p.name}</h5>
+        <span class="text-[10px] text-emerald-700 font-bold">₹${p.price} / ${p.unit}</span>
+      </div>
+      <button onclick="addToCart('${p.id}'); closeSearchModal();" class="bg-emerald-600 text-white font-bold text-xs px-3 py-1.5 rounded-lg">Add</button>
+    </div>
+  `).join("");
+}
+
+function switchTab(tabName) {
+  ['home', 'offers', 'search', 'cart', 'profile'].forEach(t => {
+    const el = document.getElementById(`nav-${t}`);
+    if (el) el.className = "flex flex-col items-center text-gray-400 font-medium text-[11px]";
+  });
+  const active = document.getElementById(`nav-${tabName}`);
+  if (active) active.className = "flex flex-col items-center text-emerald-600 font-bold text-[11px]";
+
+  if (tabName === 'offers') {
+    alert("🏷️ Promo Offer: Welcome Special - 15% off on daily milk subscriptions!");
+  } else if (tabName === 'profile') {
+    const name = localStorage.getItem("customer_name") || "Valued Customer";
+    const email = localStorage.getItem("customer_email") || "Not signed in";
+    const address = localStorage.getItem("customer_address") || "Jeddah / Kerala";
+    alert(`👤 User Profile:\nName: ${name}\nEmail/Phone: ${email}\nAddress: ${address}\n\nYou can edit these details anytime.`);
+  }
 }
