@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>First Milk Venture - Delivery Driver Portal</title>
+    <title>First Milk Venture - Delivery Driver Portal (delivery.firstmilkventure.com)</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-amber-50/40 font-sans min-h-screen">
@@ -14,7 +14,7 @@
                 <div class="w-10 h-10 bg-amber-600 rounded-xl flex items-center justify-center text-white font-black text-xl">🚚</div>
                 <div>
                     <h1 class="text-base font-black text-gray-900 tracking-tight">First Milk Venture</h1>
-                    <p class="text-[10px] text-amber-700 font-bold uppercase tracking-wider">Delivery Driver & Logistics Portal</p>
+                    <p class="text-[10px] text-amber-700 font-bold uppercase tracking-wider">Delivery Driver Portal (delivery.firstmilkventure.com)</p>
                 </div>
             </div>
             <div class="flex items-center space-x-3">
@@ -36,7 +36,7 @@
             <div class="space-y-4">
                 <div>
                     <label class="block text-xs font-bold text-gray-700 mb-1">Unique Driver Access Key *</label>
-                    <input type="password" id="driver-key-input" placeholder="Enter your unique secret key..." class="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none font-mono">
+                    <input type="password" id="driver-key-input" placeholder="Enter unique secret key..." class="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none font-mono">
                 </div>
                 
                 <div class="border-t pt-3 space-y-3">
@@ -51,28 +51,25 @@
                     </div>
                     <div>
                         <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">Delivery Address & Zone</label>
-                        <input type="text" id="driver-address-input" placeholder="Enter delivery zone / address" class="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl">
+                        <input type="text" id="driver-address-input" placeholder="Enter zone / address" class="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl">
                     </div>
                 </div>
 
                 <div id="driver-login-error" class="hidden text-xs text-red-600 font-semibold bg-red-50 p-3 rounded-xl border border-red-200"></div>
 
                 <button onclick="authenticateDriver()" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-xl text-xs shadow transition-colors">
-                    Launch Driver Operations Hub →
+                    Access Driver Operations Hub →
                 </button>
-                <div class="text-center pt-2">
-                    <a href="index.html" class="text-xs text-amber-700 font-bold hover:underline">← Back to Customer Storefront</a>
-                </div>
             </div>
         </div>
 
-        <!-- Driver Dashboard Hub (Hidden until authenticated) -->
+        <!-- Driver Dashboard Hub -->
         <div id="driver-dashboard" class="hidden space-y-6">
             <div class="bg-white p-6 rounded-2xl border border-amber-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <span class="text-xs font-bold text-amber-700 uppercase">Authenticated Driver</span>
                     <h2 id="driver-welcome-title" class="text-xl font-black text-gray-900 mt-0.5">Welcome, Driver</h2>
-                    <p id="driver-meta-info" class="text-xs text-gray-500 mt-1">Zone: Zone-1 | Ready for morning dispatches</p>
+                    <p id="driver-meta-info" class="text-xs text-gray-500 mt-1">Ready for morning dispatches</p>
                 </div>
                 <div class="flex items-center space-x-3">
                     <select id="driver-zone-select" onchange="loadDriverDeliveries()" class="text-xs border border-gray-300 rounded-xl px-3 py-2 font-bold focus:outline-none">
