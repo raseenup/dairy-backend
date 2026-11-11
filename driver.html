@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>First Milk Venture - Delivery Driver Hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 font-sans min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 bg-amber-600 rounded-xl flex items-center justify-center text-white font-black text-xl">🚚</div>
+                <div>
+                    <h1 class="text-base font-black text-gray-900 tracking-tight">First Milk Venture</h1>
+                    <p class="text-[10px] text-amber-600 font-bold uppercase tracking-wider">Delivery Driver & Logistics Portal</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-3">
+                <span id="driver-status-badge" class="px-3 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-bold uppercase">Not Authenticated</span>
+                <button onclick="handleDriverLogout()" class="text-xs text-red-600 font-bold hover:underline">Sign Out</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Body -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
+        
+        <!-- Login Form -->
+        <div id="driver-login-section" class="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+            <div class="text-center mb-6">
+                <div class="w-16 h-16 bg-amber-100 text-amber-700 rounded-2xl mx-auto flex items-center justify-center text-3xl font-bold mb-3">🚚</div>
+                <h2 class="text-xl font-black text-gray-900">Delivery Driver Portal Login</h2>
+                <p class="text-xs text-gray-500 mt-1">Access authorized daily delivery routes and status controls.</p>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Driver Access Key</label>
+                    <input type="password" id="driver-access-key" value="" placeholder="Enter driver access key..." class="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none font-mono">
+                </div>
+                <div id="driver-login-error" class="hidden text-xs text-red-600 font-semibold bg-red-50 p-3 rounded-xl border border-red-200"></div>
+                <button onclick="authenticateDriver()" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-xl text-xs shadow transition-colors">
+                    Launch Driver Operations Hub →
+                </button>
+                <div class="text-center pt-2">
+                    <a href="index.html" class="text-xs text-gray-500 font-bold hover:underline">← Back to Main Storefront</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Driver Route Dashboard -->
+        <div id="driver-dashboard" class="hidden space-y-6">
+            <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                    <div>
+                        <h3 class="font-black text-gray-900 text-base">Assigned Dispatch Routes</h3>
+                        <p class="text-xs text-gray-500">Filter daily orders by zone, review customer addresses, and update status in real time.</p>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <select id="driver-zone-select" onchange="loadDriverRoutes()" class="text-xs border border-gray-300 rounded-xl px-3 py-2 font-bold focus:outline-none focus:ring-2 focus:ring-amber-500">
+                            <option value="Zone-1">Zone-1 (Ruwais / Hail St)</option>
+                            <option value="Zone-2">Zone-2 (Al-Safa / Al-Hamra)</option>
+                        </select>
+                        <input type="date" id="driver-date-input" onchange="loadDriverRoutes()" class="text-xs border border-gray-300 rounded-xl px-3 py-2 font-bold focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    </div>
+                </div>
+
+                <div id="driver-routes-container" class="space-y-3">
+                    <!-- Loaded dynamically -->
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="bg-white border-t py-4 text-center text-xs text-gray-500">
+        © 2026 First Milk Venture. Dedicated Delivery Driver & Logistics Network.
+    </footer>
+
+    <script src="driver.js"></script>
+</body>
+</html>

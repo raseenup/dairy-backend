@@ -173,7 +173,11 @@ async function handleVerifyOTP() {
 }
 
 function handleStaffLogin() {
-  window.location.href = "admin.html";
+  if (currentRole === "driver") {
+    window.location.href = "driver.html";
+  } else {
+    window.location.href = "admin.html";
+  }
 }
 
 function logout() {
