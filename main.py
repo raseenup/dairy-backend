@@ -12,17 +12,19 @@ from supabase import create_client, Client
 import resend
 
 app = FastAPI(
-    title="First Milk Venture API (Enterprise Multi-Portal Edition)",
-    description="Secured Backend supporting Customer, Admin, and Delivery Driver portals with strict authentication, unique access keys, and driver order reassignments.",
-    version="4.2.0"
+    title="First Milk Venture API (Complete Enterprise Edition)",
+    description="Production-Grade Enterprise Secured Backend for First Milk Venture: JWT Bearer Auth, Persistent Supabase OTP Storage, Protected Admin Endpoints, Driver Logistics, Webhooks, Advanced Subscriptions, and Multi-Sender Email Engine.",
+    version="4.0.0"
 )
 
+# -----------------------------------------------------------------------------
+# Security Hardening Step 4: Strict Production CORS Configuration
+# -----------------------------------------------------------------------------
 ALLOWED_ORIGINS = [
     "https://firstmilkventure.com",
     "https://www.firstmilkventure.com",
-    "https://admin.firstmilkventure.com",
-    "https://delivery.firstmilkventure.com",
     "https://backend.firstmilkventure.com",
+    "https://dairy-backend-9wcg.onrender.com",
     "http://localhost:3000",
     "http://127.0.0.1:5500",
     "http://localhost:8000"
@@ -36,6 +38,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# -----------------------------------------------------------------------------
+# Environment & Client Initialization
+# -----------------------------------------------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_KEY", ""))
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "Firstmilk3211234")
@@ -47,62 +52,80 @@ supabase: Client = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
+# Initialize Resend API Key
 resend.api_key = os.getenv("RESEND_API_KEY", "")
+
+# Bearer Token Scheme for FastAPI Docs
 security = HTTPBearer()
 
+# -----------------------------------------------------------------------------
+# Dedicated Sender Email Identities
+# -----------------------------------------------------------------------------
 AUTH_EMAIL_SENDER = "First Milk Venture Auth <auth@firstmilkventure.com>"
 FRONTDESK_EMAIL_SENDER = "First Milk Venture <frontdesk@firstmilkventure.com>"
 SUBSCRIPTION_EMAIL_SENDER = "First Milk Venture Subscriptions <subscription@firstmilkventure.com>"
 ORDERS_EMAIL_SENDER = "First Milk Venture Orders <orders@firstmilkventure.com>"
 OFFERS_EMAIL_SENDER = "First Milk Venture Offers <offers@firstmilkventure.com>"
 
-def get_current_admin_key() -> str:
-    if supabase:
+# -----------------------------------------------------------------------------
+# Security Guards & Middleware Dependencies
+# -----------------------------------------------------------------------------
+def verify_admin_access(x_admin_key: str = Header(..., alias="x-admin-key", description="Secret Admin Access Key")):
+    """Security Dependency to protect all /admin/ endpoints from unauthorized access."""
+    if x_admin_key != ADMIN_SECRET_KEY:
         try:
-            res = supabase.table("settings").select("value").eq("key", "admin_secret_key").execute()
-            if res.data and len(res.data) > 0:
-                return res.data[0].get("value", ADMIN_SECRET_KEY)
-        except Exception:
-            pass
-    return ADMIN_SECRET_KEY
+            resend.Emails.send({
+                "from": AUTH_EMAIL_SENDER,
+                "to": ["admin@firstmilkventure.com"],
+                "subject": "🚨 SECURITY ALERT: Unauthorized Admin Endpoint Access Attempt",
+                "html": f"""
+                    <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; border: 2px solid #e53e3e; border-radius: 8px; background-color: #fff5f5;">
+                        <h2 style="color: #e53e3e; margin-top: 0;">Unauthorized Access Guard Triggered</h2>
+                        <p>An unauthorized request was blocked while attempting to access a protected administrative endpoint.</p>
+                        <ul style="background: #ffffff; padding: 15px; border-radius: 5px; list-style: none; border: 1px solid #feb2b2;">
+                            <li><strong>Timestamp (UTC):</strong> {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}</li>
+                            <li><strong>Status Code:</strong> 403 Forbidden</li>
+                            <li><strong>Action Required:</strong> Verify system security logs or key rotations.</li>
+                        </ul>
+                        <p style="margin-bottom: 0;">First Milk Venture Automated Security System</p>
+                    </div>
+                """
+            })
+        except Exception as alert_err:
+            print(f"[ERROR] Failed to send admin security alert email: {str(alert_err)}")
 
-def verify_admin_access(x_admin_key: str = Header(..., alias="x-admin-key", description="Admin Access Key")):
-    current_key = get_current_admin_key()
-    if x_admin_key != current_key:
-        raise HTTPException(status_code=403, detail="Invalid access key provided.")
+        raise HTTPException(
+            status_code=403, 
+            detail="Access Denied: Invalid or missing X-Admin-Key header credential."
+        )
 
-def verify_driver_access(x_driver_key: str = Header(..., alias="x-driver-key", description="Unique Driver Access Key")):
-    current_admin = get_current_admin_key()
-    if x_driver_key == current_admin or x_driver_key == DRIVER_SECRET_KEY:
-        return True
-    if supabase:
-        try:
-            res = supabase.table("drivers").select("*").eq("access_code", x_driver_key).execute()
-            if res.data and len(res.data) > 0:
-                return True
-        except Exception:
-            pass
-    raise HTTPException(status_code=403, detail="Invalid access key provided.")
+def verify_driver_access(x_driver_key: str = Header(..., alias="x-driver-key", description="Secret Driver Access Key")):
+    """Phase 2: Security dependency to authorize delivery driver personnel."""
+    if x_driver_key != DRIVER_SECRET_KEY and x_driver_key != ADMIN_SECRET_KEY:
+        raise HTTPException(status_code=403, detail="Access Denied: Invalid X-Driver-Key header.")
 
 def verify_jwt(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    """Security Dependency to decode JWT access token and return authenticated user email."""
     token = credentials.credentials
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_email: str = payload.get("sub")
         if not user_email:
-            raise HTTPException(status_code=401, detail="Invalid session credential.")
+            raise HTTPException(status_code=401, detail="Invalid token payload.")
         return user_email
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Session expired. Please sign in again.")
+        raise HTTPException(status_code=401, detail="Token has expired. Please verify OTP again.")
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid session token.")
+        raise HTTPException(status_code=401, detail="Could not validate credentials.")
 
+# -----------------------------------------------------------------------------
+# Pydantic Schemas
+# -----------------------------------------------------------------------------
 class RequestOTP(BaseModel):
     email: EmailStr
     phone: Optional[str] = None
     full_name: Optional[str] = None
     address: Optional[str] = None
-    password: Optional[str] = None
 
 class VerifyOTP(BaseModel):
     email: EmailStr
@@ -110,11 +133,6 @@ class VerifyOTP(BaseModel):
     otp: str
     full_name: Optional[str] = None
     address: Optional[str] = None
-    password: Optional[str] = None
-
-class SigninPayload(BaseModel):
-    email_or_phone: str
-    password: Optional[str] = None
 
 class ProductCreate(BaseModel):
     name: str
@@ -143,36 +161,20 @@ class SubscriptionCreate(BaseModel):
     zone_id: Optional[str] = "Zone-1"
 
 class SubscriptionModify(BaseModel):
-    status: Optional[str] = None
-    pause_until: Optional[str] = None
+    status: Optional[str] = None  # active, paused, cancelled
+    pause_until: Optional[str] = None  # YYYY-MM-DD
     frequency: Optional[str] = None
     quantity: Optional[int] = None
 
 class DeliveryStatusUpdate(BaseModel):
-    status: str
+    status: str  # e.g., "pending", "out_for_delivery", "delivered", "cancelled"
     notes: Optional[str] = None
 
-class DeliveryDriverAssign(BaseModel):
-    driver_id: str
-    driver_name: Optional[str] = None
-
-class DriverCreate(BaseModel):
-    name: str
-    phone: str
-    address: str
-    zone_id: str = "Zone-1"
-    access_code: str
-
-class DriverProfileUpdate(BaseModel):
-    name: Optional[str] = None
-    phone: Optional[str] = None
-    address: Optional[str] = None
-
-class AdminKeyUpdate(BaseModel):
-    new_admin_key: str
+class DeliveryGenerationRequest(BaseModel):
+    target_date: Optional[str] = "2026-11-10"
 
 class PaymentWebhookPayload(BaseModel):
-    event: str
+    event: str  # payment.succeeded, payment.failed, order.cancelled
     order_id: str
     transaction_id: str
     amount: float
@@ -182,9 +184,9 @@ class OfferCreate(BaseModel):
     title: str
     description: str
     discount_percentage: float
-    target_tier: str
-    start_date: str
-    end_date: str
+    target_tier: str  # "normal", "bulk", "subscription", or "all"
+    start_date: str   # Format: YYYY-MM-DD
+    end_date: str     # Format: YYYY-MM-DD
 
 class BroadcastOffer(BaseModel):
     offer_id: Optional[str] = None
@@ -192,53 +194,127 @@ class BroadcastOffer(BaseModel):
     subject: str = "🎉 Special Limited-Time Offer from First Milk Venture!"
     custom_message: str = ""
 
+# -----------------------------------------------------------------------------
+# Background Task: Automated Daily Order Dispatch Generator & Real-time Inventory
+# -----------------------------------------------------------------------------
 def generate_daily_orders(target_date_override: Optional[str] = None):
     today_str = target_date_override or datetime.utcnow().strftime("%Y-%m-%d")
     if not supabase:
-        return {"success": False, "error": "Supabase client not connected"}
+        print("[CRON WARNING] Supabase client is not connected.")
+        return {"success": False, "error": "Supabase not connected", "target_date": today_str}
     
     try:
+        print(f"[CRON] Running automated daily order generation for date: {today_str}")
+        
         response = supabase.table("subscriptions").select("*").eq("status", "active").execute()
         active_subs = response.data or []
+        
         if not active_subs:
-            return {"success": True, "generated_count": 0}
+            print("[CRON] No active subscriptions found for today.")
+            return {"success": True, "generated_count": 0, "target_date": today_str}
 
         orders_to_insert = []
+        stock_deductions = {}
+
         for sub in active_subs:
             pause_until = sub.get("pause_until")
             if pause_until and pause_until >= today_str:
+                print(f"[CRON] Skipping paused subscription {sub.get('id')} until {pause_until}")
                 continue
+
+            p_id = sub.get("product_id")
+            qty = sub.get("quantity", 1)
+            stock_deductions[p_id] = stock_deductions.get(p_id, 0) + qty
 
             orders_to_insert.append({
                 "subscription_id": sub.get("id"),
                 "user_email": sub.get("user_email"),
-                "product_id": sub.get("product_id"),
-                "quantity": sub.get("quantity", 1),
+                "product_id": p_id,
+                "quantity": qty,
                 "delivery_date": today_str,
                 "status": "pending",
                 "zone_id": sub.get("zone_id", "Zone-1")
             })
-            
+        
+        for p_id, total_needed in stock_deductions.items():
+            try:
+                p_res = supabase.table("products").select("*").eq("id", p_id).execute()
+                if p_res.data:
+                    prod = p_res.data[0]
+                    curr_stock = prod.get("stock_quantity", 100)
+                    min_thresh = prod.get("min_stock_threshold", 20)
+                    new_stock = max(0, curr_stock - total_needed)
+                    
+                    supabase.table("products").update({"stock_quantity": new_stock}).eq("id", p_id).execute()
+                    
+                    if new_stock <= min_thresh:
+                        resend.Emails.send({
+                            "from": FRONTDESK_EMAIL_SENDER,
+                            "to": ["admin@firstmilkventure.com"],
+                            "subject": f"⚠️ LOW STOCK ALERT: {prod.get('name')}",
+                            "html": f"<p>Product <strong>{prod.get('name')}</strong> inventory has dropped to <strong>{new_stock} units</strong> (Min threshold: {min_thresh}). Please restock before tomorrow's dispatch.</p>"
+                        })
+            except Exception as stock_err:
+                print(f"[ERROR] Inventory deduction error for {p_id}: {str(stock_err)}")
+
         if orders_to_insert:
             supabase.table("deliveries").insert(orders_to_insert).execute()
-            return {"success": True, "generated_count": len(orders_to_insert)}
+            print(f"[CRON] Successfully generated {len(orders_to_insert)} delivery orders for today.")
+            
+            for order in orders_to_insert:
+                user_email = order["user_email"]
+                qty = order["quantity"]
+                try:
+                    resend.Emails.send({
+                        "from": ORDERS_EMAIL_SENDER,
+                        "to": [user_email],
+                        "subject": f"🥛 Your Fresh Milk Delivery is Scheduled for Today ({today_str})",
+                        "html": f"""
+                            <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                                <h2 style="color: #2b6cb0;">First Milk Venture</h2>
+                                <p>Hello,</p>
+                                <p>Your daily milk delivery order has been generated for today!</p>
+                                <ul style="background: #f7fafc; padding: 15px; border-radius: 5px; list-style: none;">
+                                    <li><strong>Date:</strong> {today_str}</li>
+                                    <li><strong>Quantity:</strong> {qty} Unit(s)</li>
+                                    <li><strong>Status:</strong> Pending Dispatch</li>
+                                </ul>
+                                <p>Thank you for subscribing with us!</p>
+                            </div>
+                        """
+                    })
+                except Exception as email_err:
+                    print(f"[ERROR] Failed to send email to {user_email}: {str(email_err)}")
+
+            return {"success": True, "generated_count": len(orders_to_insert), "target_date": today_str}
+            
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        print(f"[ERROR] Failed to generate daily orders: {str(e)}")
+        return {"success": False, "error": str(e), "target_date": today_str}
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(generate_daily_orders, 'cron', hour=2, minute=0)
 scheduler.start()
 
-@app.get("/")
+# -----------------------------------------------------------------------------
+# Endpoints: Public Health & Service Overview
+# -----------------------------------------------------------------------------
+@app.get("/", tags=["General"])
 def read_root():
+    """Health check and API status."""
     return {
         "status": "online",
-        "service": "First Milk Venture API (Enterprise Multi-Portal Edition)",
-        "version": "4.2.0"
+        "service": "First Milk Venture API (Complete Enterprise Edition)",
+        "version": "4.0.0",
+        "docs": "/docs"
     }
 
-@app.post("/auth/request-otp")
+# -----------------------------------------------------------------------------
+# Endpoints: Public Authentication & Persistent OTP Handling (Robust Debug Version)
+# -----------------------------------------------------------------------------
+@app.post("/auth/request-otp", tags=["Authentication"])
 def request_otp(body: RequestOTP):
+    """Generate and store persistent OTP in Supabase auth_otps table, send via Resend, and return debug_otp for testing."""
     clean_email = body.email.strip().lower()
     otp = f"{random.randint(100000, 999999)}"
     expires_at = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
@@ -250,108 +326,280 @@ def request_otp(body: RequestOTP):
                 "phone": body.phone,
                 "full_name": body.full_name,
                 "address": body.address,
-                "password": body.password,
                 "otp_code": otp,
                 "expires_at": expires_at
             }).execute()
         except Exception as db_err:
-            raise HTTPException(status_code=500, detail="Failed to generate OTP request. Please try again.")
+            print(f"[ERROR] Supabase OTP save error: {str(db_err)}")
+            raise HTTPException(status_code=500, detail=f"Database save error: {str(db_err)}")
     
     try:
         resend.Emails.send({
             "from": AUTH_EMAIL_SENDER,
             "to": [clean_email],
             "subject": f"🔑 Your Verification Code: {otp}",
-            "html": f"<h2>First Milk Venture Login</h2><p>Your OTP verification code is: <strong>{otp}</strong></p>"
+            "html": f"""
+                <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                    <h2 style="color: #2b6cb0;">First Milk Venture Login</h2>
+                    <p>Your one-time login verification code is:</p>
+                    <h1 style="letter-spacing: 4px; color: #2b6cb0;">{otp}</h1>
+                    <p>This code is valid for 10 minutes. Do not share it with anyone.</p>
+                </div>
+            """
         })
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[ERROR] Resend email failed: {str(e)}")
 
-    # Security Fix: Do not expose correct OTP code in hint or API payload response!
-    return {"message": "Verification OTP sent successfully to your registered email."}
+    return {
+        "message": "OTP sent successfully to your email",
+        "debug_otp": otp
+    }
 
-@app.post("/auth/verify-otp")
+@app.post("/auth/verify-otp", tags=["Authentication"])
 def verify_otp(body: VerifyOTP):
+    """Verify persistent OTP from Supabase auth_otps table and issue signed JWT Bearer Access Token (Robust Fallback)."""
     if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection unavailable.")
+        raise HTTPException(status_code=500, detail="Supabase client not connected.")
         
     clean_email = body.email.strip().lower()
-    res = supabase.table("auth_otps").select("*").eq("email", clean_email).execute()
-    records = res.data or []
+    
+    res = supabase.table("auth_otps").select("*").or_(f"email.eq.{clean_email},email.ilike.{clean_email}").execute()
+    records = res.data
     
     if not records:
-        raise HTTPException(status_code=400, detail="Invalid or expired verification code.")
+        res_all = supabase.table("auth_otps").select("*").execute()
+        records = [r for r in (res_all.data or []) if r.get("email", "").strip().lower() == clean_email]
+    
+    if not records:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code (No record found for email).")
         
     otp_record = records[0]
     stored_code = str(otp_record.get("otp_code")).strip()
+    expires_at_str = otp_record.get("expires_at")
     
-    # Security Fix: Generic failure detail without showing expected correct OTP in hints
-    if stored_code != body.otp.strip():
-        raise HTTPException(status_code=400, detail="Invalid verification code. Please check your OTP and try again.")
+    expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+    if datetime.utcnow().replace(tzinfo=expires_at.tzinfo) > expires_at:
+        supabase.table("auth_otps").delete().eq("email", otp_record.get("email")).execute()
+        raise HTTPException(status_code=400, detail="Verification code has expired.")
         
-    supabase.table("auth_otps").delete().eq("email", clean_email).execute()
+    if stored_code != body.otp.strip():
+        raise HTTPException(status_code=400, detail=f"Invalid verification code. (Expected: {stored_code}, Received: {body.otp.strip()})")
+        
+    supabase.table("auth_otps").delete().eq("email", otp_record.get("email")).execute()
     
-    if body.password or body.full_name or body.phone:
+    payload = {
+        "sub": clean_email,
+        "exp": datetime.utcnow() + timedelta(days=7),
+        "iat": datetime.utcnow()
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    
+    try:
+        resend.Emails.send({
+            "from": FRONTDESK_EMAIL_SENDER,
+            "to": [clean_email],
+            "subject": "🥛 Welcome to First Milk Venture - Pure Freshness Every Morning!",
+            "html": f"""
+                <div style="font-family: Arial, sans-serif; padding: 25px; color: #2d3748; max-width: 600px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #ffffff;">
+                    <h2 style="color: #2b6cb0; margin-top: 0;">Welcome to First Milk Venture!</h2>
+                    <p>Hello,</p>
+                    <p>Thank you for verifying your account and joining the <strong>First Milk Venture</strong> family!</p>
+                    <p>Warm regards,<br><strong>First Milk Venture Front Desk Team</strong></p>
+                </div>
+            """
+        })
+    except Exception as email_err:
+        print(f"[ERROR] Failed to send frontdesk welcome email: {str(email_err)}")
+
+    return {
+        "message": "Authentication successful.",
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "email": clean_email,
+            "status": "authenticated"
+        }
+    }
+
+# -----------------------------------------------------------------------------
+# Endpoints: Protected Customer Profile & Subscriptions
+# -----------------------------------------------------------------------------
+@app.get("/users/me", tags=["Users"])
+def get_user_profile(user_email: str = Depends(verify_jwt)):
+    """Protected Endpoint: Fetch authenticated customer profile and active subscriptions via JWT."""
+    if not supabase:
+        return {"email": user_email, "status": "active"}
+    try:
+        subs = supabase.table("subscriptions").select("*").eq("user_email", user_email).execute()
+        return {"email": user_email, "subscriptions": subs.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.post("/subscriptions", tags=["Subscriptions"])
+def create_subscription(sub: SubscriptionCreate, user_email: str = Depends(verify_jwt)):
+    """Protected Endpoint: Activate new customer plan using authenticated JWT identity and lookup product name."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase client is not initialized.")
+    try:
+        prod_res = supabase.table("products").select("name").eq("id", sub.product_id).execute()
+        product_name = sub.product_name or "Fresh Farm Product"
+        if prod_res.data and len(prod_res.data) > 0:
+            product_name = prod_res.data[0].get("name", product_name)
+
+        payload = sub.dict()
+        payload["user_email"] = user_email
+        payload["status"] = "active"
+        payload["product_name"] = product_name
+        
+        response = supabase.table("subscriptions").insert(payload).execute()
+        
         try:
-            supabase.table("users").upsert({
-                "email": clean_email,
-                "phone": body.phone or otp_record.get("phone"),
-                "full_name": body.full_name or otp_record.get("full_name"),
-                "address": body.address or otp_record.get("address"),
-                "password": body.password or otp_record.get("password")
+            resend.Emails.send({
+                "from": SUBSCRIPTION_EMAIL_SENDER,
+                "to": [user_email],
+                "subject": f"🎉 Subscription Confirmed: {product_name} - First Milk Venture",
+                "html": f"""
+                    <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                        <h2 style="color: #2b6cb0;">Subscription Confirmed!</h2>
+                        <p>Hello,</p>
+                        <p>Your daily subscription for <strong>{product_name}</strong> with <strong>First Milk Venture</strong> has been successfully activated.</p>
+                        <ul style="background: #f7fafc; padding: 15px; border-radius: 5px; list-style: none;">
+                            <li><strong>Product:</strong> {product_name}</li>
+                            <li><strong>Quantity:</strong> {sub.quantity} Unit(s)</li>
+                            <li><strong>Frequency:</strong> {sub.frequency}</li>
+                            <li><strong>Start Date:</strong> {sub.start_date}</li>
+                        </ul>
+                    </div>
+                """
+            })
+        except Exception as email_err:
+            print(f"[ERROR] Failed to send subscription confirmation email: {str(email_err)}")
+            
+        return {"message": "Subscription activated successfully", "data": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.patch("/subscriptions/{subscription_id}", tags=["Subscriptions"])
+def modify_subscription(subscription_id: str, body: SubscriptionModify, user_email: str = Depends(verify_jwt)):
+    """Temporarily pause dispatches, resume plans, or cancel subscriptions."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase client is not initialized.")
+    try:
+        update_data = {k: v for k, v in body.dict().items() if v is not None}
+        
+        if update_data.get("status") == "active":
+            update_data["pause_until"] = None
+
+        response = supabase.table("subscriptions").update(update_data).eq("id", subscription_id).eq("user_email", user_email).execute()
+        
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Subscription not found or unauthorized.")
+            
+        return {"message": "Subscription plan updated successfully", "data": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/subscriptions", tags=["Subscriptions"])
+def get_user_subscriptions(user_email: str = Depends(verify_jwt)):
+    """Protected Endpoint: Fetch active or historical subscriptions for authenticated user."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase client is not initialized.")
+    try:
+        response = supabase.table("subscriptions").select("*").eq("user_email", user_email).execute()
+        return response.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/deliveries", tags=["Deliveries"])
+def get_user_deliveries(user_email: str = Depends(verify_jwt)):
+    """Protected Endpoint: Fetch upcoming or historical deliveries for authenticated user."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase client is not initialized.")
+    try:
+        response = supabase.table("deliveries").select("*").eq("user_email", user_email).execute()
+        return response.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+# -----------------------------------------------------------------------------
+# Phase 2: Payment Webhook Integration & Driver Logistics Engine
+# -----------------------------------------------------------------------------
+@app.post("/webhooks/payment", tags=["Billing & Payments"])
+def handle_payment_webhook(payload: PaymentWebhookPayload):
+    """Phase 2: Payment Webhook Listener for Stripe/Moyasar/HyperPay integration."""
+    if not supabase:
+        return {"status": "success", "message": "Webhook processed (Simulation)", "transaction_id": payload.transaction_id}
+    
+    new_status = "paid" if payload.event == "payment.succeeded" else "cancelled"
+    try:
+        supabase.table("deliveries").update({
+            "payment_status": new_status, 
+            "transaction_id": payload.transaction_id
+        }).eq("id", payload.order_id).execute()
+        return {"status": "success", "order_id": payload.order_id, "payment_status": new_status, "transaction_id": payload.transaction_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
+
+@app.get("/driver/deliveries", tags=["Driver Logistics"], dependencies=[Depends(verify_driver_access)])
+def get_driver_routes(zone_id: Optional[str] = "Zone-1", delivery_date: Optional[str] = None):
+    """Phase 2: Driver logistics route lookup grouped by geographic neighborhood/zone."""
+    date_filter = delivery_date or datetime.utcnow().strftime("%Y-%m-%d")
+    if not supabase:
+        return [{"id": "demo-del-1", "zone_id": zone_id, "delivery_date": date_filter, "status": "pending", "user_email": "customer@example.com"}]
+    
+    try:
+        res = supabase.table("deliveries").select("*").eq("zone_id", zone_id).eq("delivery_date", date_filter).execute()
+        return res.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.patch("/driver/deliveries/{delivery_id}", tags=["Driver Logistics"], dependencies=[Depends(verify_driver_access)])
+def update_driver_delivery_status(delivery_id: str, body: DeliveryStatusUpdate):
+    """Phase 2: Mobile delivery update interface for drivers on assigned routes."""
+    if not supabase:
+        return {"message": "Status updated (Simulation)", "status": body.status}
+    
+    try:
+        res = supabase.table("deliveries").update({"status": body.status}).eq("id", delivery_id).execute()
+        return {"message": f"Delivery marked as {body.status}", "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+# -----------------------------------------------------------------------------
+# Phase 4: Observability & Audit Trail Logging
+# -----------------------------------------------------------------------------
+@app.post("/webhooks/resend", tags=["Observability & Audit"])
+def handle_resend_email_webhook(payload: Dict[str, Any]):
+    """Phase 4: Webhook listener for Resend email events (bounced, delivered, opened)."""
+    event_type = payload.get("type", "email.unknown")
+    email_data = payload.get("data", {})
+    if supabase:
+        try:
+            supabase.table("audit_logs").insert({
+                "event_type": f"EMAIL_{event_type.upper()}",
+                "details": email_data,
+                "timestamp": datetime.utcnow().isoformat()
             }).execute()
         except Exception:
             pass
+    return {"status": "logged", "event": event_type}
 
-    payload = {"sub": clean_email, "exp": datetime.utcnow() + timedelta(days=7)}
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    return {"message": "Authentication successful.", "access_token": token, "token_type": "bearer"}
-
-@app.post("/auth/signin")
-def signin_user(body: SigninPayload):
+@app.get("/admin/audit-logs", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
+def get_audit_logs():
+    """Phase 4: Structured audit logs for backend administrative actions and deliverability."""
     if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection unavailable.")
-    identifier = body.email_or_phone.strip().lower()
-    res = supabase.table("users").select("*").or_(f"email.eq.{identifier},phone.eq.{identifier}").execute()
-    users = res.data or []
-    
-    if not users:
-        raise HTTPException(status_code=400, detail="Invalid credentials provided.")
-        
-    user = users[0]
-    if body.password and user.get("password") and user.get("password") == body.password:
-        payload = {"sub": user["email"], "exp": datetime.utcnow() + timedelta(days=7)}
-        token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-        return {"message": "Sign in successful.", "access_token": token, "token_type": "bearer", "user": user}
-        
-    raise HTTPException(status_code=400, detail="Invalid credentials provided.")
-
-@app.get("/users/me")
-def get_user_profile(user_email: str = Depends(verify_jwt)):
-    if not supabase:
-        return {"email": user_email}
+        return [{"event": "system_init", "timestamp": datetime.utcnow().isoformat()}]
     try:
-        user_res = supabase.table("users").select("*").eq("email", user_email).execute()
-        profile = user_res.data[0] if user_res.data else {"email": user_email}
-        subs = supabase.table("subscriptions").select("*").eq("user_email", user_email).execute()
-        profile["subscriptions"] = subs.data or []
-        return profile
+        return supabase.table("audit_logs").select("*").order("timestamp", desc=True).limit(100).execute().data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-@app.patch("/users/me")
-def update_user_profile(body: Dict[str, Any], user_email: str = Depends(verify_jwt)):
-    if not supabase:
-        return {"message": "Profile updated."}
-    try:
-        clean_update = {k: v for k, v in body.items() if k in ["full_name", "phone", "address"]}
-        res = supabase.table("users").update(clean_update).eq("email", user_email).execute()
-        return {"message": "Customer details updated successfully", "data": res.data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/products")
+# -----------------------------------------------------------------------------
+# Endpoints: Public Products & Offers
+# -----------------------------------------------------------------------------
+@app.get("/products", tags=["Products"])
 def get_products():
+    """Public Endpoint: Retrieve available product catalog."""
     if not supabase:
         return [
             {"id": "prod-1", "name": "Fresh Whole Milk", "description": "100% pure pasteurized farm fresh milk.", "price": 6.5, "unit": "Liter"},
@@ -359,151 +607,183 @@ def get_products():
             {"id": "prod-3", "name": "Organic Fresh Butter", "description": "Rich traditional churned butter.", "price": 18.0, "unit": "500g"}
         ]
     try:
-        res = supabase.table("products").select("*").execute()
-        return res.data or []
-    except Exception:
-        return []
-
-@app.post("/subscriptions")
-def create_subscription(sub: SubscriptionCreate, user_email: str = Depends(verify_jwt)):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection unavailable.")
-    try:
-        payload = sub.dict()
-        payload["user_email"] = user_email
-        payload["status"] = "active"
-        res = supabase.table("subscriptions").insert(payload).execute()
-        return {"message": "Subscription plan activated", "data": res.data}
+        response = supabase.table("products").select("*").execute()
+        return response.data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-@app.get("/subscriptions")
-def get_user_subscriptions(user_email: str = Depends(verify_jwt)):
+@app.get("/offers", tags=["Offers Engine"])
+def get_active_offers(tier: str = "all"):
+    """Public Endpoint: Fetch active promotional offers filtered by customer tier."""
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    
     if not supabase:
-        return []
-    res = supabase.table("subscriptions").select("*").eq("user_email", user_email).execute()
-    return res.data or []
-
-@app.patch("/subscriptions/{sub_id}")
-def modify_subscription(sub_id: str, body: SubscriptionModify, user_email: str = Depends(verify_jwt)):
-    if not supabase:
-        return {"message": "Subscription updated."}
-    update_data = {k: v for k, v in body.dict().items() if v is not None}
-    res = supabase.table("subscriptions").update(update_data).eq("id", sub_id).eq("user_email", user_email).execute()
-    return {"message": "Subscription plan updated", "data": res.data}
-
-@app.get("/deliveries")
-def get_user_deliveries(user_email: str = Depends(verify_jwt)):
-    if not supabase:
-        return []
-    res = supabase.table("deliveries").select("*").eq("user_email", user_email).execute()
-    return res.data or []
-
-@app.post("/webhooks/payment")
-def handle_payment_webhook(payload: PaymentWebhookPayload):
-    if not supabase:
-        return {"status": "success"}
+        return [
+            {
+                "id": "demo-offer-1",
+                "title": "Subscription Discount",
+                "description": "15% off on daily milk subscriptions!",
+                "discount_percentage": 15.0,
+                "target_tier": "subscription",
+                "start_date": "2026-11-01",
+                "end_date": "2026-12-31"
+            }
+        ]
+        
     try:
-        supabase.table("deliveries").update({"payment_status": "paid"}).eq("id", payload.order_id).execute()
-        return {"status": "success"}
-    except Exception:
-        return {"status": "success"}
-
-# Driver Portal Endpoints
-@app.get("/driver/deliveries", dependencies=[Depends(verify_driver_access)])
-def get_driver_routes(zone_id: Optional[str] = "Zone-1", delivery_date: Optional[str] = None):
-    date_filter = delivery_date or datetime.utcnow().strftime("%Y-%m-%d")
-    if not supabase:
-        return []
-    res = supabase.table("deliveries").select("*").eq("zone_id", zone_id).eq("delivery_date", date_filter).execute()
-    return res.data or []
-
-@app.patch("/driver/deliveries/{delivery_id}", dependencies=[Depends(verify_driver_access)])
-def update_driver_delivery_status(delivery_id: str, body: DeliveryStatusUpdate):
-    if not supabase:
-        return {"message": "Delivery status updated."}
-    res = supabase.table("deliveries").update({"status": body.status}).eq("id", delivery_id).execute()
-    return {"message": f"Delivery marked as {body.status}", "data": res.data}
-
-@app.patch("/driver/profile", dependencies=[Depends(verify_driver_access)])
-def update_driver_own_profile(body: DriverProfileUpdate, x_driver_key: str = Header(..., alias="x-driver-key")):
-    if not supabase:
-        return {"message": "Driver profile updated."}
-    try:
-        clean_update = {k: v for k, v in body.dict().items() if v is not None}
-        res = supabase.table("drivers").update(clean_update).eq("access_code", x_driver_key).execute()
-        return {"message": "Driver details updated successfully", "data": res.data}
+        query = supabase.table("offers").select("*").lte("start_date", today_str).gte("end_date", today_str)
+        if tier != "all":
+            query = query.in_("target_tier", [tier, "all"])
+        response = query.execute()
+        return response.data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Admin Portal Management Endpoints
-@app.get("/admin/drivers", dependencies=[Depends(verify_admin_access)])
-def get_all_drivers():
-    if not supabase:
         return []
-    res = supabase.table("drivers").select("*").execute()
-    return res.data or []
 
-@app.post("/admin/drivers", dependencies=[Depends(verify_admin_access)])
-def create_driver(driver: DriverCreate):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection unavailable.")
-    res = supabase.table("drivers").insert(driver.dict()).execute()
-    return {"message": "New driver created with unique secret access code", "data": res.data}
-
-@app.delete("/admin/drivers/{driver_id}", dependencies=[Depends(verify_admin_access)])
-def delete_driver(driver_id: str):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection unavailable.")
-    res = supabase.table("drivers").delete().eq("id", driver_id).execute()
-    return {"message": "Driver removed successfully", "data": res.data}
-
-@app.patch("/admin/deliveries/{delivery_id}/driver", dependencies=[Depends(verify_admin_access)])
-def reassign_delivery_driver(delivery_id: str, body: DeliveryDriverAssign):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection unavailable.")
-    res = supabase.table("deliveries").update({
-        "driver_id": body.driver_id,
-        "driver_name": body.driver_name
-    }).eq("id", delivery_id).execute()
-    return {"message": "Order reassigned to specified delivery driver successfully", "data": res.data}
-
-@app.patch("/admin/key", dependencies=[Depends(verify_admin_access)])
-def update_admin_key(body: AdminKeyUpdate):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection unavailable.")
-    supabase.table("settings").upsert({"key": "admin_secret_key", "value": body.new_admin_key}).execute()
-    return {"message": "Admin secret access key changed successfully"}
-
-@app.post("/admin/products", dependencies=[Depends(verify_admin_access)])
+# -----------------------------------------------------------------------------
+# SECURED ADMIN ENDPOINTS (Protected by X-Admin-Key Security Guard)
+# -----------------------------------------------------------------------------
+@app.post("/admin/products", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
 def create_product(product: ProductCreate):
+    """Secured Admin Endpoint: Create new product in catalog."""
     if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection unavailable.")
-    res = supabase.table("products").insert(product.dict()).execute()
-    return {"message": "Product added to catalog", "data": res.data}
+        raise HTTPException(status_code=500, detail="Supabase client is not initialized.")
+    try:
+        response = supabase.table("products").insert(product.dict()).execute()
+        return {"message": "Product created successfully", "data": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-@app.delete("/admin/products/{product_id}", dependencies=[Depends(verify_admin_access)])
+@app.patch("/admin/products/{product_id}", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
+def update_product(product_id: str, product: ProductUpdate):
+    """Secured Admin Endpoint: Modify product details or prices."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase client is not initialized.")
+    try:
+        update_data = {k: v for k, v in product.dict().items() if v is not None}
+        response = supabase.table("products").update(update_data).eq("id", product_id).execute()
+        return {"message": "Product updated successfully", "data": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.delete("/admin/products/{product_id}", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
 def delete_product(product_id: str):
+    """Secured Admin Endpoint: Delete a product from inventory."""
     if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection unavailable.")
-    res = supabase.table("products").delete().eq("id", product_id).execute()
-    return {"message": "Product deleted", "data": res.data}
+        raise HTTPException(status_code=500, detail="Supabase client is not initialized.")
+    try:
+        response = supabase.table("products").delete().eq("id", product_id).execute()
+        return {"message": "Product deleted successfully", "data": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-@app.get("/admin/audit-logs", dependencies=[Depends(verify_admin_access)])
-def get_audit_logs():
+@app.post("/admin/generate-deliveries", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
+def manual_generate_deliveries(payload: Optional[DeliveryGenerationRequest] = None):
+    """Secured Admin Endpoint: Trigger manual daily order generation."""
+    target_date = payload.target_date if payload else None
+    result = generate_daily_orders(target_date_override=target_date)
+    return {"message": "Manual delivery generation and emails executed", "result": result}
+
+@app.patch("/admin/deliveries/{delivery_id}/status", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
+def update_delivery_status(delivery_id: str, body: DeliveryStatusUpdate):
+    """Secured Admin Endpoint: Update delivery status and dispatch email from orders@firstmilkventure.com."""
     if not supabase:
-        return []
-    res = supabase.table("audit_logs").select("*").order("timestamp", desc=True).limit(50).execute()
-    return res.data or []
+        raise HTTPException(status_code=500, detail="Supabase client is not initialized.")
+    try:
+        response = supabase.table("deliveries").update({"status": body.status}).eq("id", delivery_id).execute()
+        updated_data = response.data
+        
+        if not updated_data:
+            raise HTTPException(status_code=404, detail="Delivery record not found.")
+            
+        delivery_record = updated_data[0]
+        user_email = delivery_record.get("user_email")
+        delivery_date = delivery_record.get("delivery_date")
+        quantity = delivery_record.get("quantity", 1)
+        
+        status_display = body.status.replace("_", " ").title()
+        
+        if user_email:
+            try:
+                resend.Emails.send({
+                    "from": ORDERS_EMAIL_SENDER,
+                    "to": [user_email],
+                    "subject": f"📦 Update on Your Milk Delivery: {status_display}",
+                    "html": f"""
+                        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                            <h2 style="color: #2b6cb0;">First Milk Venture</h2>
+                            <p>Hello,</p>
+                            <p>There is an update regarding your milk delivery for <strong>{delivery_date}</strong>:</p>
+                            <ul style="background: #f7fafc; padding: 15px; border-radius: 5px; list-style: none;">
+                                <li><strong>Quantity:</strong> {quantity} Unit(s)</li>
+                                <li><strong>New Status:</strong> <span style="color: #2b6cb0; font-weight: bold;">{status_display}</span></li>
+                            </ul>
+                            <p>Thank you for choosing First Milk Venture!</p>
+                        </div>
+                    """
+                })
+            except Exception as email_err:
+                print(f"[ERROR] Failed to send status update email: {str(email_err)}")
 
-@app.post("/admin/generate-deliveries", dependencies=[Depends(verify_admin_access)])
-def manual_generate_deliveries():
-    res = generate_daily_orders()
-    return {"message": "Automated daily dispatches executed", "result": res}
+        return {
+            "message": f"Delivery status updated to '{body.status}' and client notified successfully",
+            "data": updated_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-@app.get("/offers")
-def get_offers():
+@app.post("/admin/offers", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
+def create_offer(offer: OfferCreate):
+    """Secured Admin Endpoint: Configure time-bound promotional offers by tier."""
+    if offer.target_tier.lower() not in ["normal", "bulk", "subscription", "all"]:
+        raise HTTPException(status_code=400, detail="Target tier must be 'normal', 'bulk', 'subscription', or 'all'")
+        
     if not supabase:
-        return []
-    res = supabase.table("offers").select("*").execute()
-    return res.data or []
+        return {"message": "Offer created (Simulation)", "offer": offer.dict()}
+        
+    try:
+        response = supabase.table("offers").insert(offer.dict()).execute()
+        return {"message": "Offer created successfully", "data": response.data}
+    except Exception as e:
+        return {"message": "Offer configured successfully", "data": offer.dict()}
+
+@app.post("/admin/offers/broadcast", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
+def broadcast_offer_email(payload: BroadcastOffer):
+    """Secured Admin Endpoint: Broadcast promotional emails from offers@firstmilkventure.com."""
+    if not payload.target_emails:
+        raise HTTPException(status_code=400, detail="No target emails provided")
+        
+    sent_count = 0
+    failed_emails = []
+    custom_text = payload.custom_message if payload.custom_message else "Check out our exclusive client discount offer available for a limited time!"
+    
+    for email in payload.target_emails:
+        try:
+            resend.Emails.send({
+                "from": OFFERS_EMAIL_SENDER,
+                "to": [email],
+                "subject": payload.subject,
+                "html": f"""
+                    <div style="font-family: Arial, sans-serif; padding: 25px; color: #2d3748; max-width: 600px; border: 2px solid #ed8936; border-radius: 8px; background-color: #fffaf0;">
+                        <h2 style="color: #dd6b20; margin-top: 0;">🎁 Exclusive Offer for You!</h2>
+                        <p>Hello,</p>
+                        <p>{custom_text}</p>
+                        
+                        <div style="background-color: #ffffff; border: 1px dashed #dd6b20; padding: 15px; text-align: center; margin: 20px 0; border-radius: 6px;">
+                            <h3 style="color: #c05621; margin: 0;">Special Client Discount</h3>
+                            <p style="font-size: 14px; color: #718096; margin: 5px 0 0 0;">Valid for a limited time only!</p>
+                        </div>
+
+                        <p>Visit your customer dashboard to apply this offer to your next order or subscription plan.</p>
+                        <p style="margin-bottom: 0;">Warm regards,<br><strong>First Milk Venture Promotions Team</strong></p>
+                    </div>
+                """
+            })
+            sent_count += 1
+        except Exception as email_err:
+            print(f"[ERROR] Failed to send offer email to {email}: {str(email_err)}")
+            failed_emails.append(email)
+            
+    return {
+        "message": f"Broadcast completed. Successfully sent {sent_count} offer emails.",
+        "failed_emails": failed_emails
+    }
