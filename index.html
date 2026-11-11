@@ -1,266 +1,235 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>First Milk Venture | Customer Portal</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>First Milk Venture - Fresh Daily Dairy Delivery Platform</title>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-50 font-sans text-gray-800 antialiased min-h-screen flex flex-col pb-16 md:pb-0">
-
-  <!-- Desktop Header Navigation Bar -->
-  <header class="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm">
-    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
-      <div class="flex items-center space-x-3 cursor-pointer" onclick="showPage('home')">
-        <span class="text-3xl">🥛</span>
-        <div>
-          <h1 class="text-xl font-bold text-emerald-700 tracking-tight leading-tight">First Milk Venture</h1>
-          <p class="text-xs text-gray-500 font-medium">Fresh Daily Dairy Delivery Platform</p>
+<body class="bg-gray-50 font-sans min-h-screen pb-24">
+    <!-- Top Header Bar -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-black text-xl shadow">🥛</div>
+                <div>
+                    <h1 class="text-base font-black text-gray-900 tracking-tight">First Milk Venture</h1>
+                    <p class="text-[10px] text-emerald-600 font-bold uppercase tracking-wider">Fresh Daily Dairy Delivery Platform</p>
+                </div>
+            </div>
+            
+            <!-- Top Right Controls: Search & Auth/Profile -->
+            <div class="flex items-center space-x-3">
+                <button onclick="openSearchModal()" class="flex items-center space-x-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 px-3.5 py-2 rounded-xl text-xs font-bold transition-colors">
+                    <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    <span>Search</span>
+                </button>
+                <div id="auth-header-container">
+                    <button onclick="openAuthModal('signin')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow transition-colors">
+                        Sign In / Register
+                    </button>
+                </div>
+            </div>
         </div>
-      </div>
+    </header>
 
-      <!-- Top Desktop Navigation Links -->
-      <nav class="hidden md:flex items-center space-x-6 text-sm font-semibold text-gray-700">
-        <button onclick="showPage('home')" class="hover:text-emerald-600 transition-colors">Home</button>
-        <button onclick="showPage('offers')" class="hover:text-emerald-600 transition-colors">Offers</button>
-        <button onclick="showPage('subscriptions')" class="hover:text-emerald-600 transition-colors">Subscriptions</button>
-        <button onclick="showPage('deliveries')" class="hover:text-emerald-600 transition-colors">Deliveries</button>
-        <button onclick="showPage('cart')" class="hover:text-emerald-600 transition-colors relative">
-          Cart
-          <span id="cart-badge-desktop" class="hidden bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full -top-2 -right-3 absolute">0</span>
-        </button>
-        <button onclick="showPage('profile')" class="hover:text-emerald-600 transition-colors">Profile</button>
-      </nav>
-
-      <!-- Right Header Actions (Search & Auth Trigger) -->
-      <div class="flex items-center space-x-3 ml-auto md:ml-0">
-        <div class="relative hidden sm:block">
-          <input type="text" id="top-search-bar" onkeyup="filterProducts('top-search-bar')" placeholder="Search products..." class="pl-8 pr-3 py-1.5 border border-gray-300 rounded-lg text-xs w-36 sm:w-48 focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
-          <span class="absolute left-2.5 top-1.5 text-xs text-gray-400">🔍</span>
-        </div>
-
-        <div id="nav-actions">
-          <button id="login-btn" onclick="openAuthModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition-all shadow-sm">
-            Sign In / Register
-          </button>
-          <div id="user-profile-nav" class="hidden flex items-center space-x-2">
-            <span id="user-name-display" class="text-xs font-semibold text-emerald-800 bg-emerald-100 px-2 py-1 rounded"></span>
-            <button onclick="logout()" class="text-xs text-red-600 font-bold px-2 py-1 border border-red-200 rounded hover:bg-red-50">Logout</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </header>
-
-  <!-- Dynamic Offers Engine Banner -->
-  <div id="offers-banner" class="hidden bg-gradient-to-r from-emerald-600 to-teal-700 py-2 px-4 text-center text-xs text-white font-bold shadow-inner"></div>
-
-  <!-- Main Dynamic View Container -->
-  <main class="max-w-7xl mx-auto px-4 py-6 flex-1 w-full">
-
-    <!-- PAGE 1: HOME PAGE (Catalog + Single & Subscription Purchases) -->
-    <section id="page-home" class="space-y-8">
-      <div class="bg-emerald-800 text-white rounded-2xl p-6 sm:p-8 shadow-lg flex flex-col md:flex-row items-center justify-between gap-6">
-        <div class="space-y-3">
-          <span class="bg-emerald-700 text-emerald-200 text-xs font-bold px-3 py-1 rounded-full uppercase">100% Pure & Farm Fresh</span>
-          <h2 class="text-3xl font-extrabold sm:text-4xl">Pure Farm Milk Delivered Every Morning</h2>
-          <p class="text-emerald-100 text-sm max-w-xl">Purchase single items for instant checkout or configure recurring daily subscriptions with free doorstep delivery.</p>
-        </div>
-        <button onclick="document.getElementById('product-catalog-section').scrollIntoView({behavior:'smooth'})" class="bg-white text-emerald-800 hover:bg-emerald-50 font-bold text-sm px-5 py-3 rounded-xl shadow transition-colors whitespace-nowrap">
-          Explore Products ↓
-        </button>
-      </div>
-
-      <div id="product-catalog-section" class="space-y-4">
-        <div class="flex items-center justify-between">
-          <h3 class="text-xl font-bold text-gray-900">Product Catalog</h3>
-          <span class="text-xs font-medium text-gray-500">Single Item & Subscription Ready</span>
-        </div>
-        <div id="product-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          <p class="col-span-full text-center text-gray-500 py-8 text-sm">Loading product catalog...</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- PAGE 2: OFFERS PAGE (Inspired by Image 2 - Dedicated Offers Interface) -->
-    <section id="page-offers" class="hidden space-y-6">
-      <div class="border-b pb-3">
-        <h2 class="text-2xl font-bold text-gray-900">Exclusive Deals & Promo Offers</h2>
-        <p class="text-xs text-gray-500">Special discounts, subscription vouchers, and daily deals.</p>
-      </div>
-      <div id="offers-list-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <p class="text-gray-500 text-sm">Loading active offers...</p>
-      </div>
-    </section>
-
-    <!-- PAGE 3: SEARCH PAGE (Dedicated Mobile/Desktop Search View) -->
-    <section id="page-search" class="hidden space-y-6">
-      <div class="border-b pb-3">
-        <h2 class="text-2xl font-bold text-gray-900">Search Product Catalog</h2>
-        <p class="text-xs text-gray-500">Find fresh milk, curd, butter, ghee, paneer, and organic dairy products.</p>
-      </div>
-      <div class="relative max-w-lg mx-auto mb-6">
-        <input type="text" id="dedicated-search-bar" onkeyup="filterProducts('dedicated-search-bar')" placeholder="Search items by name or category..." class="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none shadow-sm" />
-        <span class="absolute left-3.5 top-3.5 text-base text-gray-400">🔍</span>
-      </div>
-      <div id="search-results-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        <!-- Filtered items displayed here -->
-      </div>
-    </section>
-
-    <!-- PAGE 4: ACTIVE SUBSCRIPTIONS -->
-    <section id="page-subscriptions" class="hidden space-y-6">
-      <div class="flex justify-between items-center border-b pb-3">
-        <div>
-          <h2 class="text-2xl font-bold text-gray-900">Active Subscriptions</h2>
-          <p class="text-xs text-gray-500">Manage daily plans, skip dates, or temporarily pause daily dispatches.</p>
-        </div>
-        <button onclick="showPage('home')" class="bg-emerald-600 text-white text-xs font-bold px-3 py-2 rounded-lg">+ Add New Subscription</button>
-      </div>
-      <div id="subscriptions-container" class="space-y-4">
-        <p class="text-gray-500 text-sm">Loading active subscriptions...</p>
-      </div>
-    </section>
-
-    <!-- PAGE 5: DELIVERY SCHEDULE -->
-    <section id="page-deliveries" class="hidden space-y-6">
-      <div class="border-b pb-3">
-        <h2 class="text-2xl font-bold text-gray-900">Delivery Schedule & Order History</h2>
-        <p class="text-xs text-gray-500">Real-time status tracking for morning deliveries and assigned driver routes.</p>
-      </div>
-      <div id="deliveries-container" class="space-y-4">
-        <p class="text-gray-500 text-sm">Loading delivery schedule...</p>
-      </div>
-    </section>
-
-    <!-- PAGE 6: CART & INSTANT CHECKOUT -->
-    <section id="page-cart" class="hidden space-y-6">
-      <div class="border-b pb-3">
-        <h2 class="text-2xl font-bold text-gray-900">Shopping Cart & Instant Checkout</h2>
-        <p class="text-xs text-gray-500">Review one-off items and execute payment SDK checkout.</p>
-      </div>
-      <div id="cart-items-container" class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-4">
-        <p class="text-gray-500 text-sm">Your cart is empty.</p>
-      </div>
-    </section>
-
-    <!-- PAGE 7: CUSTOMER PROFILE -->
-    <section id="page-profile" class="hidden space-y-6 max-w-2xl mx-auto">
-      <div class="border-b pb-3">
-        <h2 class="text-2xl font-bold text-gray-900">Customer Profile & Registration Info</h2>
-        <p class="text-xs text-gray-500">Registered contact details, phone number, and delivery address.</p>
-      </div>
-      <div id="profile-card" class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-4">
-        <p class="text-gray-500 text-sm">Please sign in to view profile details.</p>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- BOTTOM MOBILE NAVIGATION BAR (MATCHING IMAGE 2 INTERFACE EXACTLY) -->
-  <nav class="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 py-2 px-4 z-40 flex justify-around items-center text-center shadow-lg">
-    <button onclick="showPage('home')" id="mobile-tab-home" class="flex flex-col items-center justify-center text-emerald-700 font-bold">
-      <svg class="w-5 h-5 mb-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l1.293 1.293a1 1 0 001.414-1.414l-7-7z"/></svg>
-      <span class="text-[10px]">Home</span>
-    </button>
-    
-    <button onclick="showPage('offers')" id="mobile-tab-offers" class="flex flex-col items-center justify-center text-gray-500 hover:text-emerald-600 font-medium">
-      <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 7h10M7 12h10m-7 5h7M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
-      <span class="text-[10px]">Offers</span>
-    </button>
-
-    <button onclick="showPage('search')" id="mobile-tab-search" class="flex flex-col items-center justify-center text-gray-500 hover:text-emerald-600 font-medium">
-      <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-      <span class="text-[10px]">Search</span>
-    </button>
-
-    <button onclick="showPage('cart')" id="mobile-tab-cart" class="flex flex-col items-center justify-center text-gray-500 hover:text-emerald-600 font-medium relative">
-      <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z"/></svg>
-      <span id="cart-badge-mobile" class="hidden bg-emerald-600 text-white text-[9px] font-bold px-1 rounded-full -top-1 right-2 absolute">0</span>
-      <span class="text-[10px]">Cart</span>
-    </button>
-
-    <button onclick="showPage('profile')" id="mobile-tab-profile" class="flex flex-col items-center justify-center text-gray-500 hover:text-emerald-600 font-medium">
-      <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
-      <span class="text-[10px]">Profile</span>
-    </button>
-  </nav>
-
-  <!-- MULTI-ROLE AUTHENTICATION & CLIENT REGISTRATION MODAL -->
-  <div id="auth-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center hidden p-4">
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 relative overflow-hidden">
-      <button onclick="closeAuthModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-xl font-bold">&times;</button>
-      
-      <!-- Role Selection Header (Customer, Delivery Operator, Category Admin) -->
-      <div class="mb-4">
-        <label class="block text-xs font-bold text-gray-700 uppercase mb-2">Select Access Role</label>
-        <div class="grid grid-cols-3 gap-2">
-          <button onclick="setAuthRole('customer')" id="role-btn-customer" class="py-2 text-xs font-bold rounded-lg border border-emerald-600 bg-emerald-50 text-emerald-700">Customer</button>
-          <button onclick="setAuthRole('driver')" id="role-btn-driver" class="py-2 text-xs font-bold rounded-lg border border-gray-200 bg-gray-50 text-gray-600">Delivery Operator</button>
-          <button onclick="setAuthRole('admin')" id="role-btn-admin" class="py-2 text-xs font-bold rounded-lg border border-gray-200 bg-gray-50 text-gray-600">Category Admin</button>
-        </div>
-      </div>
-
-      <!-- Customer Registration & OTP Step 1 -->
-      <div id="customer-auth-form" class="space-y-3">
-        <h3 class="text-lg font-bold text-gray-900">Client Registration & OTP Login</h3>
-        <p class="text-xs text-gray-500">Enter your details to register or log into your customer account.</p>
+    <!-- Main Workspace -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         
-        <div class="space-y-2">
-          <div>
-            <label class="block text-[11px] font-bold text-gray-700 uppercase">Email Address *</label>
-            <input type="email" id="auth-email" placeholder="name@example.com" class="w-full px-3 py-2 border rounded-lg text-xs" />
-          </div>
-          <div>
-            <label class="block text-[11px] font-bold text-gray-700 uppercase">Mobile Phone Number *</label>
-            <input type="tel" id="auth-phone" placeholder="Enter mobile number" class="w-full px-3 py-2 border rounded-lg text-xs" />
-          </div>
-          <div>
-            <label class="block text-[11px] font-bold text-gray-700 uppercase">Full Name</label>
-            <input type="text" id="auth-name" placeholder="Enter full name" class="w-full px-3 py-2 border rounded-lg text-xs" />
-          </div>
-          <div>
-            <label class="block text-[11px] font-bold text-gray-700 uppercase">Delivery Address & Zone</label>
-            <input type="text" id="auth-address" placeholder="Enter delivery address & zone" class="w-full px-3 py-2 border rounded-lg text-xs" />
-          </div>
+        <!-- Hero Location Banner -->
+        <div class="bg-gradient-to-r from-emerald-800 via-emerald-900 to-emerald-950 rounded-3xl p-6 text-white shadow-md flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <span class="bg-emerald-700/80 text-emerald-100 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">Farm Fresh Direct</span>
+                <h2 class="text-2xl font-black mt-2 tracking-tight">Pure Farm Milk Delivered Every Morning</h2>
+                <p class="text-xs text-emerald-200 mt-1">Select single items or configure daily recurring dairy subscriptions.</p>
+            </div>
+            <div class="flex items-center space-x-2 bg-emerald-950/70 px-4 py-2.5 rounded-2xl border border-emerald-700/60 text-xs">
+                <span class="text-red-400 font-black">📍</span>
+                <div>
+                    <span class="text-[10px] text-emerald-300 block uppercase font-bold">Delivery Location</span>
+                    <span id="user-location-label" class="font-bold">Jeddah / Kerala (Editable)</span>
+                </div>
+            </div>
         </div>
 
-        <button id="send-otp-btn" onclick="handleRequestOTP()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg text-xs shadow">
-          Send Verification Code
-        </button>
-      </div>
-
-      <!-- Customer OTP Step 2 -->
-      <div id="otp-verify-step" class="space-y-4 hidden">
-        <h3 class="text-lg font-bold text-gray-900">Verify OTP Code</h3>
-        <p class="text-xs text-gray-600">Enter the 6-digit verification code sent to <span id="target-email-display" class="font-bold"></span>.</p>
-        <input type="text" id="auth-otp" placeholder="123456" maxlength="6" class="w-full px-4 py-2 border rounded-lg text-center tracking-widest text-lg font-mono" />
-        <button id="verify-otp-btn" onclick="handleVerifyOTP()" class="w-full bg-emerald-600 text-white font-bold py-2.5 rounded-lg text-xs shadow">
-          Verify OTP & Sign In
-        </button>
-      </div>
-
-      <!-- Staff Multi-Role Direct Login Form -->
-      <div id="staff-auth-form" class="space-y-4 hidden">
-        <h3 id="staff-title" class="text-lg font-bold text-gray-900">Staff Portal Access</h3>
-        <p class="text-xs text-gray-500">Access authorized operations, logistics routes, or category controls.</p>
+        <!-- Product Catalog Section -->
         <div>
-          <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Secret Access Key</label>
-          <input type="password" id="staff-key" placeholder="Enter security key..." class="w-full px-3 py-2 border rounded-lg text-xs" />
+            <div class="flex justify-between items-center mb-4">
+                <div>
+                    <h3 class="text-lg font-black text-gray-900">Product Catalog</h3>
+                    <p class="text-xs text-gray-500">Single Item & Subscription Ready with Multi-Quantity Selection</p>
+                </div>
+            </div>
+            <div id="product-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                <!-- Populated dynamically -->
+            </div>
         </div>
-        <button onclick="handleStaffLogin()" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-lg text-xs shadow">
-          Launch Operations & Driver Hub →
-        </button>
-      </div>
 
-      <div id="auth-error" class="hidden mt-3 p-2 bg-red-50 text-red-700 text-xs rounded border border-red-200"></div>
+        <!-- Order Status & Subscription Status Dashboard Content -->
+        <div class="bg-white rounded-3xl border border-gray-200 p-6 shadow-sm space-y-4">
+            <h3 class="font-black text-gray-900 text-base">Your Active Subscriptions & Order Status</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100 space-y-3">
+                    <span class="text-[10px] font-bold text-emerald-700 uppercase block tracking-wider">Active Milk Subscriptions</span>
+                    <div id="dashboard-subscriptions-list" class="text-xs text-gray-700 space-y-2">
+                        <p class="italic text-gray-400">Loading subscription status...</p>
+                    </div>
+                </div>
+                <div class="bg-blue-50/50 p-4 rounded-2xl border border-blue-100 space-y-3">
+                    <span class="text-[10px] font-bold text-blue-700 uppercase block tracking-wider">Recent Delivery Order Statuses</span>
+                    <div id="dashboard-orders-list" class="text-xs text-gray-700 space-y-2">
+                        <p class="italic text-gray-400">Loading order status...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Bottom Mobile Tab Bar (Home, Offers, Search, Cart, Profile) -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-40 py-2.5 shadow-lg">
+        <div class="max-w-md mx-auto flex justify-around items-center text-center">
+            <button onclick="switchTab('home')" id="nav-home" class="flex flex-col items-center text-emerald-600 font-bold text-[11px]">
+                <span class="text-lg">🏠</span>
+                <span>Home</span>
+            </button>
+            <button onclick="switchTab('offers')" id="nav-offers" class="flex flex-col items-center text-gray-400 font-medium text-[11px]">
+                <span class="text-lg">🏷️</span>
+                <span>Offers</span>
+            </button>
+            <button onclick="openSearchModal()" class="flex flex-col items-center text-gray-400 font-medium text-[11px]">
+                <span class="text-lg">🔍</span>
+                <span>Search</span>
+            </button>
+            <button onclick="openCartDrawer()" id="nav-cart" class="flex flex-col items-center text-gray-400 font-medium text-[11px] relative">
+                <span class="text-lg">🛒</span>
+                <span>Cart</span>
+                <span id="cart-badge" class="absolute -top-1.5 right-2 bg-emerald-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full hidden">0</span>
+            </button>
+            <button onclick="openEditProfileModal()" id="nav-profile" class="flex flex-col items-center text-gray-400 font-medium text-[11px]">
+                <span class="text-lg">👤</span>
+                <span>Profile</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Modal: Auth (Sign In & Sign Up Sections) -->
+    <div id="auth-modal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-200 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 id="auth-modal-title" class="font-black text-gray-900 text-base">Customer Access Portal</h3>
+                <button onclick="closeAuthModal()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+
+            <!-- Two Sections: Sign In vs Sign Up -->
+            <div class="flex bg-gray-100 p-1 rounded-2xl text-xs font-bold">
+                <button onclick="setAuthTab('signin')" id="tab-signin" class="flex-1 py-2.5 rounded-xl bg-white text-gray-900 shadow-sm transition-all">Sign In</button>
+                <button onclick="setAuthTab('signup')" id="tab-signup" class="flex-1 py-2.5 rounded-xl text-gray-500 transition-all">New Account (Sign Up)</button>
+            </div>
+
+            <!-- Section 1: Sign In -->
+            <div id="form-signin" class="space-y-3 text-xs">
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Email ID or Phone Number</label>
+                    <input type="text" id="signin-identifier" placeholder="Enter email or mobile phone..." class="w-full px-3.5 py-2.5 border rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Custom Password</label>
+                    <input type="password" id="signin-password" placeholder="Enter custom password..." class="w-full px-3.5 py-2.5 border rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                </div>
+                <div id="signin-error" class="hidden text-red-600 bg-red-50 p-2.5 rounded-xl font-semibold border border-red-200"></div>
+                <button onclick="handleCustomerSignIn()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow transition-colors">Sign In to Account →</button>
+            </div>
+
+            <!-- Section 2: Sign Up -->
+            <div id="form-signup" class="hidden space-y-3 text-xs">
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Full Name (Optional)</label>
+                    <input type="text" id="signup-fullname" placeholder="Muhammed Raseen..." class="w-full px-3 py-2 border rounded-xl">
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Email ID *</label>
+                        <input type="email" id="signup-email" placeholder="your@email.com" class="w-full px-3 py-2 border rounded-xl">
+                    </div>
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Phone Number *</label>
+                        <input type="tel" id="signup-phone" placeholder="+9665..." class="w-full px-3 py-2 border rounded-xl">
+                    </div>
+                </div>
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Create Custom Password *</label>
+                    <input type="password" id="signup-password" placeholder="Set custom password for next time..." class="w-full px-3 py-2 border rounded-xl">
+                </div>
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Delivery Address & Zone (Editable later)</label>
+                    <textarea id="signup-address" placeholder="Jeddah Hail Street / Kerala..." class="w-full px-3 py-2 border rounded-xl" rows="2"></textarea>
+                </div>
+                <div id="signup-error" class="hidden text-red-600 bg-red-50 p-2.5 rounded-xl font-semibold border border-red-200"></div>
+                <button onclick="handleCustomerSignUp()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow transition-colors">Create Account & Register →</button>
+            </div>
+        </div>
     </div>
-  </div>
 
-  <footer class="bg-white border-t py-4 text-center text-xs text-gray-500">
-    © 2026 First Milk Venture. Enterprise Operations, Billing & Logistics Platform.
-  </footer>
+    <!-- Modal: Edit Profile & Full Details -->
+    <div id="profile-modal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-200 space-y-4 text-xs">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-black text-gray-900 text-base">Edit Account & Delivery Details</h3>
+                <button onclick="closeEditProfileModal()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div class="space-y-3">
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Full Name</label>
+                    <input type="text" id="edit-fullname" class="w-full px-3 py-2 border rounded-xl">
+                </div>
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Phone Number</label>
+                    <input type="tel" id="edit-phone" class="w-full px-3 py-2 border rounded-xl">
+                </div>
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Delivery Address</label>
+                    <textarea id="edit-address" class="w-full px-3 py-2 border rounded-xl" rows="3"></textarea>
+                </div>
+                <button onclick="saveProfileDetails()" class="w-full bg-emerald-600 text-white font-bold py-2.5 rounded-xl shadow">Save Updated Profile Details</button>
+            </div>
+        </div>
+    </div>
 
-  <script src="app.js"></script>
+    <!-- Modal: Top Right Search -->
+    <div id="search-modal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-start justify-center pt-20 p-4">
+        <div class="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div class="flex justify-between items-center">
+                <h3 class="font-black text-gray-900 text-base">Search Products</h3>
+                <button onclick="closeSearchModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
+            </div>
+            <input type="text" id="search-input" oninput="executeSearch()" placeholder="Search milk, ghee, curd, butter..." class="w-full px-4 py-3 border border-gray-300 rounded-2xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            <div id="search-results-container" class="space-y-2 max-h-60 overflow-y-auto">
+                <p class="text-xs text-gray-400 italic text-center py-4">Type to search catalog products...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Drawer: Cart & Multi-Quantity Single Click Addition -->
+    <div id="cart-drawer" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex justify-end">
+        <div class="bg-white w-full max-w-md h-full p-6 flex flex-col shadow-2xl">
+            <div class="flex justify-between items-center border-b pb-4">
+                <h3 class="font-black text-gray-900 text-base">Your Cart Items</h3>
+                <button onclick="closeCartDrawer()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
+            </div>
+            <div id="cart-items-container" class="flex-1 overflow-y-auto py-4 space-y-3">
+                <p class="text-xs text-gray-400 italic text-center py-8">Your cart is empty.</p>
+            </div>
+            <div class="border-t pt-4 space-y-3">
+                <div class="flex justify-between text-sm font-black text-gray-900">
+                    <span>Total Amount:</span>
+                    <span id="cart-total-price">₹0.00</span>
+                </div>
+                <button onclick="checkoutCart()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-2xl text-xs shadow">Proceed to Secure Checkout →</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
 </body>
 </html>
