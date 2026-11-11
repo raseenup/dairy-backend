@@ -43,7 +43,7 @@ app_config = {
     "drivers": {
         "DriverMilk2026": {"name": "Primary Driver", "phone": "+966500000000", "address": "Jeddah Zone 1"}
     },
-    "users_db": {}  # In-memory customer account store fallback (email/phone -> password, full_name, address)
+    "users_db": {}  # In-memory customer account store fallback
 }
 
 JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-jwt-key-firstmilk-2026")
@@ -150,7 +150,6 @@ class UpdateDriverInfoRequest(BaseModel):
 def read_root():
     return {"status": "online", "service": "First Milk Venture Enterprise API", "version": "6.0.0"}
 
-# Customer Auth (Sign Up & Sign In with Custom Password)
 @app.post("/auth/signup", tags=["Customer Auth"])
 def customer_signup(body: CustomerSignUpRequest):
     email_clean = body.email.strip().lower()
@@ -199,7 +198,6 @@ def customer_signin(body: CustomerSignInRequest):
             break
             
     if not found_user:
-        # Secure error without disclosing user existence or correct passwords
         raise HTTPException(status_code=400, detail="Invalid email/phone or password. Please try again.")
 
     if found_user.get("password") != body.password:
@@ -250,7 +248,6 @@ def request_otp(body: RequestOTP):
 def verify_otp(body: VerifyOTP):
     clean_email = body.email.strip().lower()
     if not supabase:
-        # Fallback simulation
         token = jwt.encode({"sub": clean_email, "exp": datetime.utcnow() + timedelta(days=7)}, JWT_SECRET, algorithm=JWT_ALGORITHM)
         return {"message": "Authentication successful.", "access_token": token}
 
@@ -264,7 +261,6 @@ def verify_otp(body: VerifyOTP):
     stored_code = str(otp_record.get("otp_code")).strip()
     
     if stored_code != body.otp.strip():
-        # Clean, secure error message without leaking expected code hint
         raise HTTPException(status_code=400, detail="Invalid verification code. Please check and try again.")
         
     supabase.table("auth_otps").delete().eq("email", clean_email).execute()
@@ -340,7 +336,6 @@ def get_deliveries(user_email: str = Depends(verify_jwt)):
     except Exception:
         return [{"id": "del-8821", "order_number": "FMV-8821", "status": "out_for_delivery", "quantity": 2, "delivery_date": datetime.utcnow().strftime("%Y-%m-%d")}]
 
-# Driver Endpoints
 @app.post("/driver/profile", tags=["Driver Logistics"], dependencies=[Depends(verify_driver_access)])
 def update_driver_profile(body: UpdateDriverInfoRequest, x_driver_key: str = Header(..., alias="x-driver-key")):
     if x_driver_key in app_config["drivers"]:
@@ -374,7 +369,6 @@ def update_driver_delivery_status(delivery_id: str, body: DeliveryStatusUpdate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Admin Controls
 @app.get("/admin/drivers", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
 def list_drivers():
     return [{"key": k, **v} for k, v in app_config["drivers"].items()]
