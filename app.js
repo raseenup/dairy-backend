@@ -35,7 +35,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function showPage(pageId) {
-  const pages = ["home", "subscriptions", "deliveries", "cart", "profile"];
+  const pages = ["home", "offers", "search", "subscriptions", "deliveries", "cart", "profile"];
   pages.forEach(p => {
     const el = document.getElementById(`page-${p}`);
     if (el) el.classList.add("hidden");
@@ -43,6 +43,20 @@ function showPage(pageId) {
   const target = document.getElementById(`page-${pageId}`);
   if (target) target.classList.remove("hidden");
 
+  // Update mobile tab bar active states
+  ["home", "offers", "search", "cart", "profile"].forEach(tab => {
+    const tabBtn = document.getElementById(`mobile-tab-${tab}`);
+    if (tabBtn) {
+      if (tab === pageId) {
+        tabBtn.className = "flex flex-col items-center justify-center text-emerald-700 font-bold";
+      } else {
+        tabBtn.className = "flex flex-col items-center justify-center text-gray-500 hover:text-emerald-600 font-medium";
+      }
+    }
+  });
+
+  if (pageId === "offers") renderOffersPage();
+  if (pageId === "search") renderSearchPage();
   if (pageId === "subscriptions") loadSubscriptions();
   if (pageId === "deliveries") loadDeliveries();
   if (pageId === "cart") renderCart();
@@ -190,14 +204,16 @@ async function loadProducts() {
   const grid = document.getElementById("product-grid");
   try {
     allProducts = await apiFetch("/products");
-    renderProductCards(allProducts);
+    renderProductCards(allProducts, "product-grid");
   } catch (err) {
-    grid.innerHTML = `<p class="col-span-full text-center text-red-500 text-xs">Failed to load catalog.</p>`;
+    if (grid) grid.innerHTML = `<p class="col-span-full text-center text-red-500 text-xs">Failed to load catalog.</p>`;
   }
 }
 
-function renderProductCards(products) {
-  const grid = document.getElementById("product-grid");
+function renderProductCards(products, targetContainerId = "product-grid") {
+  const grid = document.getElementById(targetContainerId);
+  if (!grid) return;
+
   if (!products.length) {
     grid.innerHTML = `<p class="col-span-full text-center text-gray-500 text-xs">No matching products found.</p>`;
     return;
@@ -227,10 +243,26 @@ function renderProductCards(products) {
   `).join("");
 }
 
-function filterProducts() {
-  const query = document.getElementById("top-search-bar").value.toLowerCase();
+function filterProducts(inputId = "top-search-bar") {
+  const inputEl = document.getElementById(inputId);
+  if (!inputEl) return;
+  const query = inputEl.value.toLowerCase();
   const filtered = allProducts.filter(p => p.name.toLowerCase().includes(query) || (p.description && p.description.toLowerCase().includes(query)));
-  renderProductCards(filtered);
+  
+  if (inputId === "dedicated-search-bar") {
+    renderProductCards(filtered, "search-results-grid");
+  } else {
+    renderProductCards(filtered, "product-grid");
+  }
+}
+
+function renderSearchPage() {
+  const searchInput = document.getElementById("dedicated-search-bar");
+  if (searchInput && searchInput.value) {
+    filterProducts("dedicated-search-bar");
+  } else {
+    renderProductCards(allProducts, "search-results-grid");
+  }
 }
 
 function addToCart(id, name, price) {
@@ -246,13 +278,19 @@ function addToCart(id, name, price) {
 
 function updateCartBadge() {
   const total = cart.reduce((acc, item) => acc + item.qty, 0);
-  const badge = document.getElementById("cart-badge");
-  if (total > 0) {
-    badge.textContent = total;
-    badge.classList.remove("hidden");
-  } else {
-    badge.classList.add("hidden");
-  }
+  const badgeDesktop = document.getElementById("cart-badge-desktop");
+  const badgeMobile = document.getElementById("cart-badge-mobile");
+  
+  [badgeDesktop, badgeMobile].forEach(badge => {
+    if (badge) {
+      if (total > 0) {
+        badge.textContent = total;
+        badge.classList.remove("hidden");
+      } else {
+        badge.classList.add("hidden");
+      }
+    }
+  });
 }
 
 function renderCart() {
@@ -315,8 +353,7 @@ async function checkoutCart(amount) {
       })
     });
 
-    alert(`✅ Payment of ₹${amount} successful!
-Transaction ID: ${res.transaction_id || 'TXN-9988'}`);
+    alert(`✅ Payment of ₹${amount} successful!\nTransaction ID: ${res.transaction_id || 'TXN-9988'}`);
     cart = [];
     updateCartBadge();
     showPage("deliveries");
@@ -329,12 +366,39 @@ async function loadOffers() {
   try {
     const offers = await apiFetch("/offers?tier=all");
     const banner = document.getElementById("offers-banner");
-    if (offers && offers.length > 0) {
+    if (offers && offers.length > 0 && banner) {
       const topOffer = offers[0];
       banner.textContent = `🎉 Promo Offer: ${topOffer.title} - ${topOffer.description}`;
       banner.classList.remove("hidden");
     }
   } catch (err) {}
+}
+
+async function renderOffersPage() {
+  const container = document.getElementById("offers-list-container");
+  if (!container) return;
+
+  try {
+    const offers = await apiFetch("/offers?tier=all");
+    if (!offers || !offers.length) {
+      container.innerHTML = `<p class="text-gray-500 text-xs col-span-full">No active promotional offers available right now.</p>`;
+      return;
+    }
+
+    container.innerHTML = offers.map(o => `
+      <div class="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-5 shadow-sm">
+        <span class="bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase mb-2 inline-block">${o.target_tier || 'ALL CUSTOMERS'}</span>
+        <h4 class="font-bold text-gray-900 text-base mb-1">${o.title}</h4>
+        <p class="text-xs text-gray-600 mb-3">${o.description}</p>
+        <div class="flex justify-between items-center text-xs border-t border-emerald-200/60 pt-3">
+          <span class="font-black text-emerald-700 text-sm">${o.discount_percentage}% OFF</span>
+          <span class="text-gray-400 text-[10px]">Valid until: ${o.end_date || 'Limited time'}</span>
+        </div>
+      </div>
+    `).join("");
+  } catch (err) {
+    container.innerHTML = `<p class="text-red-500 text-xs col-span-full">Failed to load offers list.</p>`;
+  }
 }
 
 async function loadSubscriptions() {
@@ -441,8 +505,7 @@ async function loadDeliveries() {
 function handleSubscribe(productId, productName) {
   if (!localStorage.getItem("access_token")) return openAuthModal();
 
-  const qty = prompt(`Subscribe to ${productName}.
-Enter daily quantity (Units):`, "1");
+  const qty = prompt(`Subscribe to ${productName}.\nEnter daily quantity (Units):`, "1");
   if (!qty) return;
 
   apiFetch("/subscriptions", {
