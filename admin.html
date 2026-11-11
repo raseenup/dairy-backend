@@ -3,203 +3,92 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>First Milk Venture - Category Admin Portal</title>
+    <title>First Milk Venture - Admin Portal (admin.firstmilkventure.com)</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50 font-sans min-h-screen">
-    <!-- Header -->
+    
     <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div class="flex items-center space-x-3">
-                <div class="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-black text-xl">🥛</div>
+                <div class="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-black text-xl">🛡️</div>
                 <div>
                     <h1 class="text-base font-black text-gray-900 tracking-tight">First Milk Venture</h1>
-                    <p class="text-[10px] text-emerald-600 font-bold uppercase tracking-wider">Category Admin Portal & Catalog Management</p>
+                    <p class="text-[10px] text-emerald-600 font-bold uppercase tracking-wider">Admin Portal (admin.firstmilkventure.com)</p>
                 </div>
             </div>
-            <div class="flex items-center space-x-3">
-                <span id="staff-role-badge" class="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-bold uppercase">Not Authenticated</span>
-                <button onclick="handleStaffLogout()" class="text-xs text-red-600 font-bold hover:underline">Sign Out</button>
-            </div>
+            <button onclick="handleAdminLogout()" class="text-xs text-red-600 font-bold hover:underline">Sign Out</button>
         </div>
     </header>
 
-    <!-- Main Content Container -->
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
-        <!-- Login Card (Shown if not logged in) -->
-        <div id="staff-login-section" class="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
-            <h2 class="text-xl font-black text-gray-900 mb-2">Category Admin Portal Login</h2>
-            <p class="text-xs text-gray-500 mb-6">Enter your secure administrator access key.</p>
-
+        <!-- Admin Login Card -->
+        <div id="admin-login-section" class="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+            <h2 class="text-xl font-black text-gray-900 mb-2">Category Admin Access</h2>
+            <p class="text-xs text-gray-500 mb-6">Enter secret access key to access admin operations.</p>
+            
             <div class="space-y-4">
                 <div>
-                    <label class="block text-xs font-bold text-gray-700 mb-1">Admin Access Key</label>
-                    <input type="password" id="staff-secret-key" value="" placeholder="Enter admin access key..." class="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-mono">
+                    <label class="block text-xs font-bold text-gray-700 mb-1">Secret Access Key</label>
+                    <input type="password" id="admin-secret-key" placeholder="Enter Admin Secret Access Key..." class="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 font-mono">
                 </div>
-                <div id="staff-error" class="hidden text-xs text-red-600 font-semibold bg-red-50 p-3 rounded-xl border border-red-200"></div>
+                <!-- Security Fix: Clean error message without printing expected key in hint -->
+                <div id="admin-login-error" class="hidden text-xs text-red-600 font-semibold bg-red-50 p-3 rounded-xl border border-red-200"></div>
                 <button onclick="authenticateAdmin()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl text-xs shadow transition-colors">
-                    Access Admin Dashboard →
+                    Access Admin Workspace →
                 </button>
-                <div class="text-center pt-2">
-                    <a href="index.html" class="text-xs text-emerald-600 font-bold hover:underline">← Back to Customer Storefront</a>
-                </div>
             </div>
         </div>
 
-        <!-- Dashboard Workspace (Hidden until logged in) -->
-        <div id="staff-dashboard" class="hidden space-y-6">
+        <!-- Admin Workspace Dashboard -->
+        <div id="admin-dashboard" class="hidden space-y-6">
             
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
-                    <span class="text-xs font-bold text-gray-400 block mb-1">Total Inventory Items</span>
-                    <h3 id="stat-products-count" class="text-2xl font-black text-gray-900">0</h3>
-                </div>
-                <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
-                    <span class="text-xs font-bold text-gray-400 block mb-1">Automated Dispatch Engine</span>
-                    <button onclick="triggerDailyDispatches()" class="mt-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors">
-                        ⚡ Run Morning Dispatches
-                    </button>
-                </div>
-                <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
-                    <span class="text-xs font-bold text-gray-400 block mb-1">Manage Drivers & Keys</span>
-                    <button onclick="openDriverModal()" class="mt-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors">
-                        🚚 Driver Keys & Setup
-                    </button>
-                </div>
-                <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
-                    <span class="text-xs font-bold text-gray-400 block mb-1">Change Admin Key</span>
-                    <button onclick="openChangeKeyModal()" class="mt-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors">
-                        🔑 Update Admin Key
+            <!-- Section 1: Update Admin Key inside Admin Portal -->
+            <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                <h3 class="font-black text-gray-900 text-base">Security: Change Admin Secret Access Key</h3>
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <input type="password" id="new-admin-key-input" placeholder="Enter new Admin Access Key..." class="px-3 py-2.5 border border-gray-300 rounded-xl text-xs flex-1 font-mono" />
+                    <button onclick="changeAdminKey()" class="bg-slate-900 hover:bg-black text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow">
+                        Update Key
                     </button>
                 </div>
             </div>
 
-            <!-- Delivery Order Reassignment & Route Management -->
-            <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+            <!-- Section 2: Manage Unique Driver Access Codes -->
+            <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                <div class="flex justify-between items-center">
                     <div>
-                        <h3 class="font-black text-gray-900 text-base">Delivery Orders & Driver Reassignment</h3>
-                        <p class="text-xs text-gray-500">Admin can change or reassign any delivery order to different drivers anytime.</p>
-                    </div>
-                    <div class="flex items-center space-x-3">
-                        <select id="admin-zone-select" onchange="loadAdminDeliveries()" class="text-xs border border-gray-300 rounded-xl px-3 py-2 font-bold focus:outline-none">
-                            <option value="Zone-1">Zone-1</option>
-                            <option value="Zone-2">Zone-2</option>
-                        </select>
-                        <input type="date" id="admin-date-input" onchange="loadAdminDeliveries()" class="text-xs border border-gray-300 rounded-xl px-3 py-2 font-bold focus:outline-none">
+                        <h3 class="font-black text-gray-900 text-base">Delivery Drivers & Unique Access Codes</h3>
+                        <p class="text-xs text-gray-500">Generate and assign unique secret access codes for each delivery driver.</p>
                     </div>
                 </div>
-                <div id="admin-deliveries-container" class="space-y-3">
-                    Loading deliveries...
+
+                <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-gray-50 p-4 rounded-xl border border-gray-200">
+                    <input type="text" id="new-driver-name" placeholder="Driver Full Name" class="px-3 py-2 border rounded-xl text-xs" />
+                    <input type="text" id="new-driver-phone" placeholder="Phone Number" class="px-3 py-2 border rounded-xl text-xs" />
+                    <input type="text" id="new-driver-code" placeholder="Unique Secret Code (e.g. DRV-99)" class="px-3 py-2 border rounded-xl text-xs font-mono" />
+                    <button onclick="createNewDriver()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 rounded-xl shadow">
+                        + Add Driver Code
+                    </button>
+                </div>
+
+                <div id="drivers-list-table" class="space-y-2 pt-2">
+                    <!-- Populated dynamically -->
                 </div>
             </div>
 
-            <!-- Product Inventory Management -->
-            <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-                <div class="flex justify-between items-center mb-6">
-                    <div>
-                        <h3 class="font-black text-gray-900 text-base">Product Inventory Management</h3>
-                        <p class="text-xs text-gray-500">Manage catalog pricing, stock thresholds, and live inventory levels.</p>
-                    </div>
-                    <button onclick="openNewProductModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl">
-                        + Add New Product
-                    </button>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse">
-                        <thead>
-                            <tr class="border-b border-gray-200 text-[11px] font-bold text-gray-400 uppercase">
-                                <th class="pb-3">Product Name</th>
-                                <th class="pb-3">Unit</th>
-                                <th class="pb-3">Price (₹)</th>
-                                <th class="pb-3">Stock Qty</th>
-                                <th class="pb-3 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="admin-product-table" class="divide-y divide-gray-100 text-xs font-medium text-gray-700">
-                            <!-- Populated dynamically -->
-                        </tbody>
-                    </table>
+            <!-- Section 3: Reassign Delivery Orders to Drivers -->
+            <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                <h3 class="font-black text-gray-900 text-base">Reassign Orders to Delivery Drivers</h3>
+                <p class="text-xs text-gray-500">Admin can change delivery orders for any delivery driver at any time.</p>
+                <div id="admin-orders-assignment-table" class="space-y-3">
+                    <!-- Populated dynamically -->
                 </div>
             </div>
 
         </div>
     </main>
-
-    <!-- Modal: Add Product -->
-    <div id="product-modal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-gray-200">
-            <h3 class="font-black text-gray-900 text-base mb-4">Add New Catalog Product</h3>
-            <div class="space-y-3 text-xs">
-                <div>
-                    <label class="block font-bold text-gray-700 mb-1">Product Name</label>
-                    <input type="text" id="new-prod-name" placeholder="e.g. Farm Fresh Paneer" class="w-full px-3 py-2 border border-gray-300 rounded-xl">
-                </div>
-                <div>
-                    <label class="block font-bold text-gray-700 mb-1">Description</label>
-                    <textarea id="new-prod-desc" placeholder="100% pure organic dairy..." class="w-full px-3 py-2 border border-gray-300 rounded-xl"></textarea>
-                </div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block font-bold text-gray-700 mb-1">Price (₹)</label>
-                        <input type="number" id="new-prod-price" value="50" class="w-full px-3 py-2 border border-gray-300 rounded-xl">
-                    </div>
-                    <div>
-                        <label class="block font-bold text-gray-700 mb-1">Unit</label>
-                        <input type="text" id="new-prod-unit" value="Pack" class="w-full px-3 py-2 border border-gray-300 rounded-xl">
-                    </div>
-                </div>
-                <div class="flex justify-end space-x-2 pt-4">
-                    <button onclick="closeNewProductModal()" class="px-4 py-2 border border-gray-300 rounded-xl text-gray-600 font-bold">Cancel</button>
-                    <button onclick="submitNewProduct()" class="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold">Save Product</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal: Manage Drivers & Unique Keys -->
-    <div id="driver-modal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-gray-200 space-y-4">
-            <h3 class="font-black text-gray-900 text-base">Delivery Drivers & Unique Access Keys</h3>
-            <p class="text-xs text-gray-500">Create unique access keys for each driver. Drivers log in using their unique secret key.</p>
-            
-            <div id="drivers-list-admin" class="space-y-2 max-h-40 overflow-y-auto text-xs border p-3 rounded-xl bg-gray-50">
-                Loading drivers...
-            </div>
-
-            <div class="border-t pt-3 space-y-2 text-xs">
-                <h4 class="font-bold text-gray-800">Add New Driver</h4>
-                <div class="grid grid-cols-2 gap-2">
-                    <input type="text" id="new-driver-name" placeholder="Driver Full Name" class="px-3 py-2 border rounded-xl">
-                    <input type="text" id="new-driver-key" placeholder="Unique Secret Key" class="px-3 py-2 border rounded-xl font-mono">
-                    <input type="text" id="new-driver-phone" placeholder="Phone Number" class="px-3 py-2 border rounded-xl">
-                    <input type="text" id="new-driver-address" placeholder="Assigned Zone / Address" class="px-3 py-2 border rounded-xl">
-                </div>
-                <button onclick="createNewDriver()" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-xl">Generate Driver & Unique Key →</button>
-            </div>
-
-            <div class="flex justify-end pt-2">
-                <button onclick="closeDriverModal()" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-xl font-bold text-xs">Close</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal: Change Admin Key -->
-    <div id="change-key-modal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-gray-200 space-y-4 text-xs">
-            <h3 class="font-black text-gray-900 text-base">Update Admin Access Key</h3>
-            <p class="text-gray-500">Enter a new secure access key for the admin portal.</p>
-            <div>
-                <label class="block font-bold text-gray-700 mb-1">New Admin Secret Key</label>
-                <input type="password" id="new-admin-key-input" placeholder="Enter new admin key..." class="w-full px-3 py-2 border rounded-xl font-mono">
-            </div>
-            <div class="flex justify-end space-x-2 pt-2">
-                <button onclick="closeChangeKeyModal()" class="px-4 py-2 border rounded-xl font-bold text-gray-600">Cancel</button>
-                <button onclick="submitNewAdminKey()" class="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold">Update Key</button>
-            </div>
-        </div>
-    </div>
 
     <script src="admin.js"></script>
 </body>
