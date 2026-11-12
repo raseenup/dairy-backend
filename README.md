@@ -1,32 +1,10 @@
-# First Milk Venture Backend (Master Edition)
+# First Milk Venture — Multi-Page Portals Package
 
-Enterprise Secured Backend for First Milk Venture.
+## Files Included
+1. `driver.html`: Standalone Driver Portal with 5-tab bottom navigation, working time attendance, delivery manifest, ePOD confirmation, cash flow ledger, and translator.
+2. `customer.html`: Standalone Customer Portal displaying active orders, subscribed vs. single purchase details, and auto-generated 4-digit delivery OTPs.
+3. `admin.html`: Standalone Admin Portal displaying all order OTPs, driver attendance logs, and one-click monthly working hours CSV report download.
+4. `app-core.js`: Shared state management script connecting all three portals using LocalStorage for real-time synchronization.
 
-## Requirements (`requirements.txt` - 8 Packages):
-```txt
-fastapi>=0.110.0
-uvicorn>=0.28.0
-pydantic[email]>=2.7.0
-pydantic-settings>=2.2.1
-resend>=0.8.0
-supabase>=2.3.4
-email-validator>=2.0.0
-apscheduler>=3.10.4
-```
-
-## Complete Endpoints & Schemas:
-- `POST /auth/request-otp` (`RequestOTP`)
-- `POST /auth/verify-otp` (`VerifyOTP`)
-- `GET /users/me`
-- `GET /products`
-- `POST /subscriptions` (`SubscriptionCreate`)
-- `GET /subscriptions/{user_email}`
-- `GET /deliveries/{user_email}`
-- `GET /offers`
-- `POST /admin/products` (`ProductCreate`)
-- `PATCH /admin/products/{product_id}` (`ProductUpdate`)
-- `DELETE /admin/products/{product_id}`
-- `POST /admin/generate-deliveries` (`DeliveryGenerationRequest`)
-- `PATCH /admin/deliveries/{delivery_id}/status` (`DeliveryStatusUpdate`)
-- `POST /admin/offers` (`OfferCreate`)
-- `POST /admin/offers/broadcast` (`BroadcastOffer`)
+## Instructions
+Extract all files into the same folder and open `driver.html`, `customer.html`, or `admin.html` in your web browser.
