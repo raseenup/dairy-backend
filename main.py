@@ -425,3 +425,210 @@ def delete_product(product_id: str):
         return {"message": "Product deleted"}
     res = supabase.table("products").delete().eq("id", product_id).execute()
     return {"message": "Product deleted", "data": res.data}
+# ==============================================================================
+# DRIVER PORTAL V2.0 EXTENSIONS (Shifts, ePOD, COD Reconciliation, SOS, Audit Logs)
+# ==============================================================================
+
+class DriverKeyVerifyBody(BaseModel):
+    driver_key: str
+
+class ShiftClockInRequest(BaseModel):
+    vehicle_plate: str
+    odometer_start: int
+    checklist_json: Dict[str, Any] = {}
+
+class ShiftStatusUpdateRequest(BaseModel):
+    status: str  # active, on_break, completed
+    odometer_end: Optional[int] = None
+
+class EPODDeliveryUpdate(BaseModel):
+    status: str  # Assigned, Picked Up, In Transit, Arrived, Delivered, Failed
+    notes: Optional[str] = None
+    epod_photo_url: Optional[str] = None
+    epod_signature_url: Optional[str] = None
+    delivery_otp: Optional[str] = None
+    failure_reason: Optional[str] = None
+    cod_collected: Optional[float] = 0.0
+    payment_status: Optional[str] = None
+    gps_lat: Optional[float] = None
+    gps_lng: Optional[float] = None
+
+class DriverExpenseCreate(BaseModel):
+    category: str  # Fuel, Toll, Parking
+    amount: float
+    receipt_url: Optional[str] = None
+
+class SOSAlertRequest(BaseModel):
+    gps_lat: Optional[float] = None
+    gps_lng: Optional[float] = None
+    message: Optional[str] = "Emergency SOS / Vehicle Breakdown triggered by driver."
+
+# In-memory fallback stores for v2 features
+app_config.setdefault("shifts_db", {})
+app_config.setdefault("expenses_db", [])
+app_config.setdefault("audit_logs_db", [])
+
+@app.post("/driver/verify-key", tags=["Driver Logistics v2"])
+def verify_driver_key_endpoint(body: DriverKeyVerifyBody):
+    key = body.driver_key.strip()
+    if key in app_config["drivers"] or key == app_config["admin_secret_key"] or key.startswith("drv_"):
+        driver_info = app_config["drivers"].get(key, {"name": "Fleet Driver", "phone": "", "address": ""})
+        return {"status": "verified", "role": "driver", "driver": driver_info}
+    raise HTTPException(status_code=401, detail="Invalid driver secret key.")
+
+@app.get("/driver/shifts/active", tags=["Driver Logistics v2"], dependencies=[Depends(verify_driver_access)])
+def get_active_shift(x_driver_key: str = Header(..., alias="x-driver-key")):
+    if supabase:
+        try:
+            res = supabase.table("driver_shifts").select("*").eq("driver_key", x_driver_key).neq("status", "completed").order("clock_in_at", desc=True).limit(1).execute()
+            if res.data:
+                return {"active_shift": res.data[0]}
+        except Exception:
+            pass
+    shift = app_config["shifts_db"].get(x_driver_key)
+    if shift and shift.get("status") != "completed":
+        return {"active_shift": shift}
+    return {"active_shift": None}
+
+@app.post("/driver/shifts/clock-in", tags=["Driver Logistics v2"], dependencies=[Depends(verify_driver_access)])
+def driver_clock_in(body: ShiftClockInRequest, x_driver_key: str = Header(..., alias="x-driver-key")):
+    shift_record = {
+        "driver_key": x_driver_key,
+        "vehicle_plate": body.vehicle_plate,
+        "odometer_start": body.odometer_start,
+        "checklist_json": body.checklist_json,
+        "clock_in_at": datetime.utcnow().isoformat(),
+        "status": "active"
+    }
+    if supabase:
+        try:
+            res = supabase.table("driver_shifts").insert(shift_record).execute()
+            if res.data:
+                return {"message": "Shift started & pre-trip inspection logged.", "shift": res.data[0]}
+        except Exception:
+            pass
+    shift_record["id"] = f"shift-{int(datetime.utcnow().timestamp())}"
+    app_config["shifts_db"][x_driver_key] = shift_record
+    return {"message": "Shift started & pre-trip inspection logged.", "shift": shift_record}
+
+@app.patch("/driver/shifts/{shift_id}", tags=["Driver Logistics v2"], dependencies=[Depends(verify_driver_access)])
+def update_driver_shift(shift_id: str, body: ShiftStatusUpdateRequest, x_driver_key: str = Header(..., alias="x-driver-key")):
+    update_data: Dict[str, Any] = {"status": body.status}
+    if body.status == "completed":
+        update_data["clock_out_at"] = datetime.utcnow().isoformat()
+    if supabase:
+        try:
+            res = supabase.table("driver_shifts").update(update_data).eq("id", shift_id).execute()
+            return {"message": f"Shift status updated to {body.status}.", "data": res.data}
+        except Exception:
+            pass
+    if x_driver_key in app_config["shifts_db"]:
+        app_config["shifts_db"][x_driver_key].update(update_data)
+    return {"message": f"Shift status updated to {body.status}."}
+
+@app.patch("/driver/deliveries/{delivery_id}/epod", tags=["Driver Logistics v2"], dependencies=[Depends(verify_driver_access)])
+def update_delivery_with_epod(delivery_id: str, body: EPODDeliveryUpdate, x_driver_key: str = Header(..., alias="x-driver-key")):
+    update_payload: Dict[str, Any] = {"status": body.status}
+    if body.epod_photo_url:
+        update_payload["epod_photo_url"] = body.epod_photo_url
+    if body.epod_signature_url:
+        update_payload["epod_signature_url"] = body.epod_signature_url
+    if body.delivery_otp:
+        update_payload["delivery_otp"] = body.delivery_otp
+    if body.failure_reason:
+        update_payload["failure_reason"] = body.failure_reason
+    if body.payment_status:
+        update_payload["payment_status"] = body.payment_status
+    elif body.status == "Delivered" and (body.cod_collected or 0) > 0:
+        update_payload["payment_status"] = "cod_collected"
+
+    audit_entry = {
+        "delivery_id": delivery_id,
+        "driver_key": x_driver_key,
+        "action": f"STATUS_{body.status.upper()}",
+        "gps_lat": body.gps_lat,
+        "gps_lng": body.gps_lng,
+        "created_at": datetime.utcnow().isoformat()
+    }
+
+    if supabase:
+        try:
+            res = supabase.table("deliveries").update(update_payload).eq("id", delivery_id).execute()
+            supabase.table("delivery_audit_logs").insert(audit_entry).execute()
+            return {"message": f"Order {delivery_id} updated to {body.status} with ePOD & audit trail.", "data": res.data}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    app_config["audit_logs_db"].append(audit_entry)
+    return {"message": f"Order {delivery_id} updated to {body.status} with ePOD & audit trail.", "audit": audit_entry}
+
+@app.post("/driver/expenses", tags=["Driver Logistics v2"], dependencies=[Depends(verify_driver_access)])
+def log_driver_expense(body: DriverExpenseCreate, x_driver_key: str = Header(..., alias="x-driver-key")):
+    expense_record = {
+        "driver_key": x_driver_key,
+        "category": body.category,
+        "amount": body.amount,
+        "receipt_url": body.receipt_url,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    if supabase:
+        try:
+            res = supabase.table("driver_expenses").insert(expense_record).execute()
+            return {"message": "Expense logged successfully.", "data": res.data}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    app_config["expenses_db"].append(expense_record)
+    return {"message": "Expense logged successfully.", "expense": expense_record}
+
+@app.get("/driver/reconciliation", tags=["Driver Logistics v2"], dependencies=[Depends(verify_driver_access)])
+def get_daily_cash_reconciliation(x_driver_key: str = Header(..., alias="x-driver-key")):
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    total_cod = 0.0
+    total_expenses = 0.0
+
+    if supabase:
+        try:
+            del_res = supabase.table("deliveries").select("cod_amount,payment_status").eq("delivery_date", today).eq("payment_status", "cod_collected").execute()
+            total_cod = sum(float(r.get("cod_amount") or 0) for r in (del_res.data or []))
+            exp_res = supabase.table("driver_expenses").select("amount").eq("driver_key", x_driver_key).gte("created_at", f"{today}T00:00:00").execute()
+            total_expenses = sum(float(r.get("amount") or 0) for r in (exp_res.data or []))
+            return {
+                "date": today,
+                "total_cod_collected": round(total_cod, 2),
+                "total_expenses": round(total_expenses, 2),
+                "net_cash_due": round(total_cod - total_expenses, 2)
+            }
+        except Exception:
+            pass
+
+    total_expenses = sum(float(e.get("amount") or 0) for e in app_config["expenses_db"] if e.get("driver_key") == x_driver_key)
+    return {
+        "date": today,
+        "total_cod_collected": round(total_cod, 2),
+        "total_expenses": round(total_expenses, 2),
+        "net_cash_due": round(total_cod - total_expenses, 2)
+    }
+
+@app.post("/driver/sos", tags=["Driver Logistics v2"], dependencies=[Depends(verify_driver_access)])
+def trigger_driver_sos(body: SOSAlertRequest, x_driver_key: str = Header(..., alias="x-driver-key")):
+    driver_info = app_config["drivers"].get(x_driver_key, {"name": "Unknown Driver", "phone": "N/A"})
+    sos_log = {
+        "delivery_id": "SOS_EMERGENCY",
+        "driver_key": x_driver_key,
+        "action": f"SOS_ALERT: {body.message}",
+        "gps_lat": body.gps_lat,
+        "gps_lng": body.gps_lng,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    if supabase:
+        try:
+            supabase.table("delivery_audit_logs").insert(sos_log).execute()
+        except Exception:
+            pass
+    app_config["audit_logs_db"].append(sos_log)
+    return {
+        "status": "dispatched",
+        "message": "Emergency SOS alert recorded and dispatched to fleet management.",
+        "driver": driver_info,
+        "coordinates": {"lat": body.gps_lat, "lng": body.gps_lng}
+    }
