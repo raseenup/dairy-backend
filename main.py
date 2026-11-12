@@ -763,3 +763,301 @@ def trigger_driver_sos(body: SOSAlertRequest, x_driver_key: str = Header(..., al
         "driver": driver_info,
         "coordinates": {"lat": body.gps_lat, "lng": body.gps_lng}
     }
+
+
+# ==============================================================================
+# COMPANY ADMIN PORTAL — ROLE-BASED ACCESS CONTROL (RBAC) MODULE
+# ==============================================================================
+
+RBAC_ROLE_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+    "super_admin": {
+        "label": "Super Admin",
+        "description": "Ultimate system authority. Manages global configurations, core security, user roles, system infrastructure, and can override any action.",
+        "permissions": ["*"],
+    },
+    "operations_manager": {
+        "label": "Operations Manager",
+        "description": "Oversees day-to-day business logistics, service catalogues, inventory, booking/order pipelines, and scheduling.",
+        "permissions": [
+            "logistics:read",
+            "logistics:write",
+            "catalog:read",
+            "catalog:write",
+            "inventory:read",
+            "inventory:write",
+            "orders:read",
+            "orders:write",
+            "drivers:read",
+            "drivers:write",
+        ],
+    },
+    "finance": {
+        "label": "Finance",
+        "description": "Controls financial ledgers, billing, tax compliance (e.g., VAT/ZATCA configurations), invoicing, payouts, and refund authorizations.",
+        "permissions": [
+            "finance:read",
+            "finance:write",
+            "tax:read",
+            "tax:write",
+            "invoicing:read",
+            "invoicing:write",
+            "payouts:read",
+            "payouts:write",
+            "refunds:authorize",
+        ],
+    },
+    "customer_support": {
+        "label": "Customer Support",
+        "description": "Handles user assistance, support ticketing, viewing user directories, and managing minor dispute escalations.",
+        "permissions": [
+            "users:read",
+            "tickets:read",
+            "tickets:write",
+            "disputes:escalate",
+        ],
+    },
+}
+
+app_config.setdefault(
+    "rbac_roles",
+    {
+        "super_admin": {
+            "access_key": app_config["admin_secret_key"],
+            **RBAC_ROLE_DEFINITIONS["super_admin"],
+        },
+        "operations_manager": {
+            "access_key": os.getenv("OPS_MANAGER_KEY", "OpsMgr2026"),
+            **RBAC_ROLE_DEFINITIONS["operations_manager"],
+        },
+        "finance": {
+            "access_key": os.getenv("FINANCE_ROLE_KEY", "FinanceZATCA2026"),
+            **RBAC_ROLE_DEFINITIONS["finance"],
+        },
+        "customer_support": {
+            "access_key": os.getenv("SUPPORT_ROLE_KEY", "SupportDesk2026"),
+            **RBAC_ROLE_DEFINITIONS["customer_support"],
+        },
+    },
+)
+
+app_config.setdefault(
+    "finance_state",
+    {
+        "tax_compliance": {
+            "zatca_tin": "300123456700003",
+            "vat_rate": 15.0,
+            "zatca_mode": "clearance_enabled",
+        },
+        "ledger": {
+            "gross_revenue": 14850.00,
+            "vat_collected": 2227.50,
+            "driver_payouts": 3120.00,
+        },
+        "refund_requests": [
+            {
+                "id": "REF-201",
+                "order_id": "FMV-1001",
+                "user_email": "customer@firstmilkventure.com",
+                "amount": 45.00,
+                "reason": "Damaged seal reported on morning delivery",
+                "status": "pending",
+            }
+        ],
+    },
+)
+
+app_config.setdefault(
+    "support_tickets",
+    [
+        {
+            "id": "TKT-501",
+            "customer_email": "customer@firstmilkventure.com",
+            "category": "minor_dispute",
+            "summary": "Customer requested morning delivery window adjustment & minor bottle credit",
+            "status": "open",
+            "created_at": datetime.utcnow().isoformat(),
+        }
+    ],
+)
+
+
+class RBACVerifyRequest(BaseModel):
+    access_key: str
+    role: str
+
+
+class RotateRoleKeyRequest(BaseModel):
+    new_access_key: str
+
+
+class TaxConfigUpdateRequest(BaseModel):
+    zatca_tin: str
+    vat_rate: float
+    zatca_mode: str
+
+
+class RefundDecisionRequest(BaseModel):
+    status: str  # approved, rejected
+
+
+class SupportTicketCreateRequest(BaseModel):
+    customer_email: str
+    category: str
+    summary: str
+
+
+class SupportTicketStatusRequest(BaseModel):
+    status: str
+
+
+def verify_rbac_permission(required_permission: str):
+    def _dependency(
+        x_admin_key: str = Header(..., alias="x-admin-key"),
+        x_admin_role: Optional[str] = Header("super_admin", alias="x-admin-role"),
+    ):
+        role_key = (x_admin_role or "super_admin").strip().lower()
+        roles_map = app_config["rbac_roles"]
+
+        # Super Admin global override (accepts master admin_secret_key or super_admin key)
+        if x_admin_key == app_config["admin_secret_key"] or x_admin_key == roles_map["super_admin"]["access_key"]:
+            return {"role": "super_admin", "override": True}
+
+        role_record = roles_map.get(role_key)
+        if not role_record or x_admin_key != role_record["access_key"]:
+            raise HTTPException(status_code=403, detail="Access Denied: Invalid RBAC credentials.")
+
+        perms = role_record.get("permissions", [])
+        if "*" in perms or required_permission in perms:
+            return {"role": role_key, "override": False}
+
+        raise HTTPException(
+            status_code=403,
+            detail=f"Least-Privilege Enforcement: Role '{role_record['label']}' lacks '{required_permission}'.",
+        )
+
+    return _dependency
+
+
+@app.post("/admin/rbac/verify", tags=["Admin RBAC"])
+def verify_rbac_login(body: RBACVerifyRequest):
+    role_key = body.role.strip().lower()
+    roles_map = app_config["rbac_roles"]
+    if role_key not in roles_map:
+        raise HTTPException(status_code=400, detail="Unknown RBAC role specified.")
+
+    # Super Admin key can authenticate into any role view with override authority
+    if body.access_key == app_config["admin_secret_key"] or body.access_key == roles_map["super_admin"]["access_key"]:
+        return {
+            "status": "verified",
+            "role": role_key,
+            "override": True,
+            "definition": RBAC_ROLE_DEFINITIONS[role_key],
+        }
+
+    if body.access_key == roles_map[role_key]["access_key"]:
+        return {
+            "status": "verified",
+            "role": role_key,
+            "override": False,
+            "definition": RBAC_ROLE_DEFINITIONS[role_key],
+        }
+
+    raise HTTPException(status_code=403, detail="Invalid Access Key for the selected RBAC role.")
+
+
+@app.get("/admin/rbac/roles", tags=["Admin RBAC"], dependencies=[Depends(verify_rbac_permission("*"))])
+def get_rbac_roles_and_keys():
+    return {
+        "roles": app_config["rbac_roles"],
+        "definitions": RBAC_ROLE_DEFINITIONS,
+    }
+
+
+@app.patch("/admin/rbac/roles/{target_role}/key", tags=["Admin RBAC"], dependencies=[Depends(verify_rbac_permission("*"))])
+def rotate_rbac_role_key(target_role: str, body: RotateRoleKeyRequest):
+    role_key = target_role.strip().lower()
+    if role_key not in app_config["rbac_roles"]:
+        raise HTTPException(status_code=404, detail="RBAC role not found.")
+    if len(body.new_access_key.strip()) < 6:
+        raise HTTPException(status_code=400, detail="Access key must be at least 6 characters.")
+    app_config["rbac_roles"][role_key]["access_key"] = body.new_access_key.strip()
+    if role_key == "super_admin":
+        app_config["admin_secret_key"] = body.new_access_key.strip()
+    return {"message": f"Access key updated for {RBAC_ROLE_DEFINITIONS[role_key]['label']}."}
+
+
+@app.get("/admin/finance/overview", tags=["Admin Finance"], dependencies=[Depends(verify_rbac_permission("finance:read"))])
+def get_finance_overview():
+    return app_config["finance_state"]
+
+
+@app.patch("/admin/finance/tax-config", tags=["Admin Finance"], dependencies=[Depends(verify_rbac_permission("tax:write"))])
+def update_tax_compliance_config(body: TaxConfigUpdateRequest):
+    app_config["finance_state"]["tax_compliance"] = {
+        "zatca_tin": body.zatca_tin.strip(),
+        "vat_rate": body.vat_rate,
+        "zatca_mode": body.zatca_mode.strip(),
+    }
+    return {
+        "message": f"VAT/ZATCA compliance updated ({body.vat_rate}% | {body.zatca_mode}).",
+        "tax_compliance": app_config["finance_state"]["tax_compliance"],
+    }
+
+
+@app.patch("/admin/finance/refunds/{refund_id}", tags=["Admin Finance"], dependencies=[Depends(verify_rbac_permission("refunds:authorize"))])
+def process_refund_authorization(refund_id: str, body: RefundDecisionRequest):
+    for ref in app_config["finance_state"]["refund_requests"]:
+        if ref["id"] == refund_id:
+            ref["status"] = body.status.strip().lower()
+            return {"message": f"Refund #{refund_id} marked as {ref['status']}.", "refund": ref}
+    raise HTTPException(status_code=404, detail="Refund request not found.")
+
+
+@app.get("/admin/support/users", tags=["Admin Support"], dependencies=[Depends(verify_rbac_permission("users:read"))])
+def list_support_user_directory():
+    users = list(app_config.get("users_db", {}).values())
+    if supabase:
+        try:
+            res = supabase.table("users").select("email,phone,full_name,address").execute()
+            if res.data:
+                users = res.data
+        except Exception:
+            pass
+    if not users:
+        users = [
+            {
+                "email": "customer@firstmilkventure.com",
+                "phone": "+966501112233",
+                "full_name": "Demo Customer",
+                "address": "Ruwais District, Jeddah",
+            }
+        ]
+    return {"users": users}
+
+
+@app.get("/admin/support/tickets", tags=["Admin Support"], dependencies=[Depends(verify_rbac_permission("tickets:read"))])
+def list_support_tickets():
+    return {"tickets": app_config["support_tickets"]}
+
+
+@app.post("/admin/support/tickets", tags=["Admin Support"], dependencies=[Depends(verify_rbac_permission("tickets:write"))])
+def create_support_ticket(body: SupportTicketCreateRequest):
+    new_ticket = {
+        "id": f"TKT-{random.randint(600, 999)}",
+        "customer_email": body.customer_email.strip().lower(),
+        "category": body.category.strip(),
+        "summary": body.summary.strip(),
+        "status": "open",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    app_config["support_tickets"].insert(0, new_ticket)
+    return {"message": f"Ticket #{new_ticket['id']} logged successfully.", "ticket": new_ticket}
+
+
+@app.patch("/admin/support/tickets/{ticket_id}", tags=["Admin Support"], dependencies=[Depends(verify_rbac_permission("tickets:write"))])
+def update_support_ticket_status(ticket_id: str, body: SupportTicketStatusRequest):
+    for t in app_config["support_tickets"]:
+        if t["id"] == ticket_id:
+            t["status"] = body.status.strip().lower()
+            return {"message": f"Ticket #{ticket_id} updated to {t['status']}.", "ticket": t}
+    raise HTTPException(status_code=404, detail="Support ticket not found.")
