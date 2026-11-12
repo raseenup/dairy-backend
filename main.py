@@ -66,7 +66,7 @@ def verify_admin_access(x_admin_key: str = Header(..., alias="x-admin-key")):
         raise HTTPException(status_code=403, detail="Access Denied: Invalid Admin Access Key.")
 
 def verify_driver_access(x_driver_key: str = Header(..., alias="x-driver-key")):
-    if x_driver_key not in app_config["drivers"] and x_driver_key != app_config["admin_secret_key"]:
+    if get_driver_record(x_driver_key) is None and x_driver_key != app_config["admin_secret_key"]:
         raise HTTPException(status_code=403, detail="Access Denied: Invalid or unregistered Driver Access Key.")
 
 def verify_jwt(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
@@ -338,13 +338,20 @@ def get_deliveries(user_email: str = Depends(verify_jwt)):
 
 @app.post("/driver/profile", tags=["Driver Logistics"], dependencies=[Depends(verify_driver_access)])
 def update_driver_profile(body: UpdateDriverInfoRequest, x_driver_key: str = Header(..., alias="x-driver-key")):
-    if x_driver_key in app_config["drivers"]:
-        app_config["drivers"][x_driver_key]["name"] = body.name
-        app_config["drivers"][x_driver_key]["phone"] = body.phone
-        app_config["drivers"][x_driver_key]["address"] = body.address
-    else:
-        app_config["drivers"][x_driver_key] = {"name": body.name, "phone": body.phone, "address": body.address}
-    return {"message": "Driver contact details saved.", "driver": app_config["drivers"][x_driver_key]}
+    key = x_driver_key.strip()
+    updated_data = {"name": body.name.strip(), "phone": body.phone.strip(), "address": body.address.strip()}
+    app_config["drivers"][key] = updated_data
+    if supabase:
+        try:
+            supabase.table("drivers").upsert({
+                "driver_key": key,
+                "name": updated_data["name"],
+                "phone": updated_data["phone"],
+                "address": updated_data["address"]
+            }, on_conflict="driver_key").execute()
+        except Exception:
+            pass
+    return {"message": "Driver profile (name, phone, address) saved successfully.", "driver": updated_data}
 
 @app.get("/driver/deliveries", tags=["Driver Logistics"], dependencies=[Depends(verify_driver_access)])
 def get_driver_routes(zone_id: Optional[str] = "Zone-1", delivery_date: Optional[str] = None):
@@ -371,23 +378,55 @@ def update_driver_delivery_status(delivery_id: str, body: DeliveryStatusUpdate):
 
 @app.get("/admin/drivers", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
 def list_drivers():
+    if supabase:
+        try:
+            res = supabase.table("drivers").select("*").execute()
+            if res.data is not None:
+                for row in res.data:
+                    app_config["drivers"][row["driver_key"]] = {
+                        "name": row.get("name", ""),
+                        "phone": row.get("phone", ""),
+                        "address": row.get("address", "")
+                    }
+        except Exception:
+            pass
     return [{"key": k, **v} for k, v in app_config["drivers"].items()]
 
 @app.post("/admin/drivers", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
 def create_driver(body: CreateDriverRequest):
-    if body.driver_key in app_config["drivers"]:
-        raise HTTPException(status_code=400, detail="This driver access key is already in use.")
-    app_config["drivers"][body.driver_key] = {
+    key = body.driver_key.strip()
+    if get_driver_record(key) is not None:
+        raise HTTPException(status_code=400, detail="This driver secret code is already in use.")
+    app_config["drivers"][key] = {
         "name": body.name,
         "phone": body.phone,
         "address": body.address
     }
-    return {"message": "Driver created successfully with unique secret key", "driver_key": body.driver_key}
+    if supabase:
+        try:
+            supabase.table("drivers").insert({
+                "driver_key": key,
+                "name": body.name,
+                "phone": body.phone,
+                "address": body.address
+            }).execute()
+        except Exception:
+            pass
+    return {"message": "Driver created successfully with unique secret key", "driver_key": key}
 
 @app.delete("/admin/drivers/{driver_key}", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
 def delete_driver(driver_key: str):
-    if driver_key in app_config["drivers"]:
-        del app_config["drivers"][driver_key]
+    key = driver_key.strip()
+    existed = key in app_config["drivers"]
+    if existed:
+        del app_config["drivers"][key]
+    if supabase:
+        try:
+            supabase.table("drivers").delete().eq("driver_key", key).execute()
+            existed = True
+        except Exception:
+            pass
+    if existed:
         return {"message": "Driver removed successfully."}
     raise HTTPException(status_code=404, detail="Driver not found.")
 
@@ -468,13 +507,39 @@ app_config.setdefault("shifts_db", {})
 app_config.setdefault("expenses_db", [])
 app_config.setdefault("audit_logs_db", [])
 
+def get_driver_record(driver_key: str):
+    key = driver_key.strip()
+    if supabase:
+        try:
+            res = supabase.table("drivers").select("*").eq("driver_key", key).execute()
+            if res.data and len(res.data) > 0:
+                rec = res.data[0]
+                app_config["drivers"][key] = {
+                    "name": rec.get("name", ""),
+                    "phone": rec.get("phone", ""),
+                    "address": rec.get("address", "")
+                }
+                return app_config["drivers"][key]
+        except Exception:
+            pass
+    return app_config["drivers"].get(key)
+
 @app.post("/driver/verify-key", tags=["Driver Logistics v2"])
 def verify_driver_key_endpoint(body: DriverKeyVerifyBody):
     key = body.driver_key.strip()
-    if key in app_config["drivers"] or key == app_config["admin_secret_key"] or key.startswith("drv_"):
-        driver_info = app_config["drivers"].get(key, {"name": "Fleet Driver", "phone": "", "address": ""})
+    if not key:
+        raise HTTPException(status_code=401, detail="Driver secret key is required.")
+    driver_info = get_driver_record(key)
+    if driver_info is not None:
         return {"status": "verified", "role": "driver", "driver": driver_info}
-    raise HTTPException(status_code=401, detail="Invalid driver secret key.")
+    raise HTTPException(status_code=401, detail="Invalid or revoked Driver Secret Code. Please contact Admin.")
+
+@app.get("/driver/profile", tags=["Driver Logistics v2"])
+def fetch_driver_profile(x_driver_key: str = Header(..., alias="x-driver-key")):
+    driver_info = get_driver_record(x_driver_key)
+    if driver_info is None:
+        raise HTTPException(status_code=403, detail="Access Denied: Invalid Driver Secret Code.")
+    return {"driver": driver_info}
 
 @app.get("/driver/shifts/active", tags=["Driver Logistics v2"], dependencies=[Depends(verify_driver_access)])
 def get_active_shift(x_driver_key: str = Header(..., alias="x-driver-key")):
