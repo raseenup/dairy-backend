@@ -1084,55 +1084,533 @@ def update_support_ticket_status(ticket_id: str, body: SupportTicketStatusReques
 
 
 # ==============================================================================
-# ENTERPRISE COMPANY CUSTOMER & ADMIN PORTAL INTEGRATION (MODULE V7.0)
+# ENTERPRISE CUSTOMER PORTAL MODULE (B2B/B2C Comprehensive Suite v7.0)
+# Covers:
+# 1. Security & Account Management (SSO, 2FA, Password Reset, Session Timeout, B2B RBAC, Company/Tax Profile & Notification Preferences)
+# 2. Support & Self-Service (Ticketing System with Attachments & History, Searchable Knowledge Base, Live Chat & AI Assistant, Community Forum)
+# 3. Orders, Products & Services (Contract Pricing & Real-time Stock Catalog, Quote-to-Order Workflow with Digital Approval, Order Tracking/Scheduling/Reorder, RMA Returns & Claims)
+# 4. Billing, Invoicing & Financials (PDF/e-Invoice ZATCA/VAT Repository, Credit Notes, SOA, Payment Gateway Cards/ACH/IBAN/Wallets/Autopay, Subscription & Credit Limit/Aging Management)
+# 5. Document Vault & Communication (Shared Document Repository for Contracts/SLAs/NDAs, Notification & Alert Center, CSAT & NPS Feedback Surveys)
+# 6. Technical, UX & Backend Requirements (ERP & CRM Sync SAP/Dynamics/Salesforce/QuickBooks, White-Label Branding Config, Multi-Language & Multi-Currency, Portal Analytics & Audit Logs)
 # ==============================================================================
 
-class PortalAdminIntegrationModule:
-    # Enterprise Admin Portal Integration backend supporting Security, Ticketing, RMA, Billing, Document Vault & ERP Sync.
-    
-    @staticmethod
-    def get_system_status():
-        return {
-            "enterprise_portal": "fully_integrated",
-            "modules": [
-                "Security & SSO / 2FA / RBAC",
-                "Ticketing & AI Knowledge Base",
-                "Quote-to-Order & RMA Claims",
-                "E-Invoices & Payment Gateway",
-                "Secure Document Vault & CSAT/NPS",
-                "ERP/CRM Real-Time Sync & Analytics"
-            ],
-            "timestamp": datetime.utcnow().isoformat()
+class SSOInitiateRequest(BaseModel):
+    provider: str  # azure_ad, okta, google_workspace, saml
+    domain: str
+
+class TwoFactorToggleRequest(BaseModel):
+    enabled: bool
+    method: str = "totp_app"  # totp_app, sms, email
+    verification_code: Optional[str] = "123456"
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+class PasswordResetConfirmRequest(BaseModel):
+    email: EmailStr
+    reset_token: str
+    new_password: str
+
+class B2BTeamMemberInvite(BaseModel):
+    email: EmailStr
+    full_name: str
+    role: str  # account_admin, buyer, finance_viewer, support_agent
+    permissions: List[str] = []
+
+class EnterpriseProfileUpdate(BaseModel):
+    company_name: Optional[str] = None
+    tax_registration_number: Optional[str] = None  # VAT / GST / ZATCA TIN
+    billing_address: Optional[str] = None
+    shipping_address: Optional[str] = None
+    notification_preferences: Optional[Dict[str, bool]] = None
+    preferred_language: Optional[str] = None
+    preferred_currency: Optional[str] = None
+
+class PortalTicketCreate(BaseModel):
+    subject: str
+    category: str  # billing, delivery, product_quality, technical, account
+    priority: str = "normal"
+    description: str
+    attachments: List[str] = []
+
+class PortalTicketReply(BaseModel):
+    message: str
+    sender_role: str = "customer"
+
+class AIChatMessageRequest(BaseModel):
+    message: str
+    escalate_to_human: bool = False
+
+class ForumPostCreate(BaseModel):
+    title: str
+    category: str  # best_practices, feature_requests, peer_qa
+    body: str
+
+class QuoteRequestCreate(BaseModel):
+    items: List[Dict[str, Any]]
+    delivery_schedule: str
+    notes: Optional[str] = ""
+
+class QuoteApproveRequest(BaseModel):
+    signer_name: str
+    signature_hash: str
+
+class RMAClaimCreate(BaseModel):
+    order_id: str
+    claim_type: str  # product_return, warranty_claim, service_adjustment
+    reason: str
+    items: List[Dict[str, Any]] = []
+
+class PaymentProcessRequest(BaseModel):
+    invoice_id: str
+    amount: float
+    method: str  # card, ach_iban, digital_wallet
+    enable_autopay: bool = False
+
+class CreditLimitActionRequest(BaseModel):
+    requested_limit: Optional[float] = None
+    plan_tier: Optional[str] = None
+
+class SurveySubmitRequest(BaseModel):
+    ticket_or_order_id: str
+    csat_score: int  # 1-5
+    nps_score: int   # 0-10
+    comments: Optional[str] = ""
+
+class WhiteLabelUpdateRequest(BaseModel):
+    custom_domain: str
+    company_logo_url: str
+    primary_color: str
+    secondary_color: str
+    font_family: str
+
+class ERPSyncTriggerRequest(BaseModel):
+    connector: str  # sap, dynamics, salesforce, quickbooks
+    sync_entities: List[str] = ["inventory", "pricing", "ledger", "invoices"]
+
+# Initialize comprehensive enterprise portal state inside app_config
+app_config.setdefault("enterprise_portal", {
+    "session_timeout_minutes": 30,
+    "sso_providers": ["Okta SAML 2.0", "Microsoft Entra ID (Azure AD)", "Google Workspace OIDC"],
+    "user_security": {},
+    "b2b_team_members": [
+        {"id": "TM-01", "email": "admin@firstmilkventure.com", "full_name": "Account Administrator", "role": "account_admin", "permissions": ["orders:place", "invoices:view", "invoices:pay", "team:manage", "quotes:approve"], "status": "active"},
+        {"id": "TM-02", "email": "buyer@firstmilkventure.com", "full_name": "Procurement Buyer", "role": "buyer", "permissions": ["orders:place", "quotes:request"], "status": "active"},
+        {"id": "TM-03", "email": "finance@firstmilkventure.com", "full_name": "Accounts Payable Officer", "role": "finance_viewer", "permissions": ["invoices:view", "invoices:pay", "soa:export"], "status": "active"}
+    ],
+    "company_profiles": {},
+    "customer_tickets": [
+        {
+            "id": "SUP-1042",
+            "subject": "Cold-Chain Morning Delivery Slot Adjustment",
+            "category": "delivery",
+            "priority": "high",
+            "status": "in_progress",
+            "attachments": ["delivery_schedule_v2.pdf"],
+            "created_at": "2026-11-12T08:15:00Z",
+            "history": [
+                {"sender": "customer", "message": "Requesting 5:30 AM arrival for Jeddah Central Branch.", "timestamp": "2026-11-12T08:15:00Z"},
+                {"sender": "agent", "message": "Route Zone-1 dispatch updated to prioritize 5:30 AM cold-chain drop.", "timestamp": "2026-11-12T09:02:00Z"}
+            ]
         }
+    ],
+    "knowledge_base": [
+        {"id": "KB-01", "category": "Getting Started", "type": "User Manual", "title": "Setting Up Automated B2B Dairy Standing Orders", "summary": "Step-by-step guide to configuring daily/weekly recurring deliveries and volume tiers.", "media_url": "https://portal.firstmilkventure.com/docs/standing-orders.pdf"},
+        {"id": "KB-02", "category": "Billing & ZATCA", "type": "FAQ", "title": "Downloading ZATCA Phase-2 Compliant XML & PDF Tax Invoices", "summary": "How finance users can export e-invoices, credit notes, and Statements of Account (SOA).", "media_url": "https://portal.firstmilkventure.com/docs/zatca-invoicing.pdf"},
+        {"id": "KB-03", "category": "Cold-Chain Quality", "type": "Video Tutorial", "title": "Temperature Verification & Submitting RMA Claims", "summary": "Video walkthrough on inspecting doorstep ePOD logs and filing instant warranty/quality claims.", "media_url": "https://portal.firstmilkventure.com/videos/rma-walkthrough.mp4"},
+        {"id": "KB-04", "category": "Security & RBAC", "type": "Troubleshooting Guide", "title": "Configuring SSO, 2FA & Granular Buyer/Finance Permissions", "summary": "Best practices for account administrators managing multi-branch enterprise teams.", "media_url": "https://portal.firstmilkventure.com/docs/security-rbac.pdf"}
+    ],
+    "forum_posts": [
+        {"id": "FRM-01", "title": "Feature Request: Multi-Branch Consolidated Monthly Statement Export", "category": "feature_requests", "author": "Al-Noor Hospitality Group", "votes": 28, "replies": 6, "body": "Would love one-click consolidated PDF/CSV export across 12 branch delivery addresses."},
+        {"id": "FRM-02", "title": "Best Practices: Managing Weekend vs Weekday Dairy Buffer Stock", "category": "best_practices", "author": "Jeddah Artisan Bakery", "votes": 19, "replies": 4, "body": "Sharing how we use automated Friday +30% schedule overrides to prevent stockouts."}
+    ],
+    "contract_pricing": {
+        "prod-1": {"contract_price": 315.0, "discount_pct": 10, "tier": "Enterprise Gold"},
+        "prod-2": {"contract_price": 36.0, "discount_pct": 10, "tier": "Enterprise Gold"},
+        "prod-3": {"contract_price": 108.0, "discount_pct": 10, "tier": "Enterprise Gold"}
+    },
+    "quotes": [
+        {"id": "QT-2026-88", "title": "Q4 Bulk Dairy & Ghee Supply Contract", "items": [{"name": "Pure Cow Ghee (500g)", "qty": 50, "unit_price": 310.0}], "total_amount": 15500.00, "status": "pending_approval", "valid_until": "2026-11-30"}
+    ],
+    "rma_claims": [
+        {"id": "RMA-309", "order_id": "FMV-8821", "claim_type": "service_adjustment", "reason": "Outer crate seal slight dent; requested credit note", "status": "approved_credit_issued", "created_at": "2026-11-10T11:20:00Z"}
+    ],
+    "invoices": [
+        {"id": "INV-2026-1101", "date": "2026-11-01", "due_date": "2026-11-15", "subtotal": 2400.00, "vat_amount": 360.00, "total": 2760.00, "status": "unpaid", "zatca_uuid": "8e4f9a12-zatca-v2-001", "type": "Tax Invoice"},
+        {"id": "INV-2026-1018", "date": "2026-10-18", "due_date": "2026-11-01", "subtotal": 1800.00, "vat_amount": 270.00, "total": 2070.00, "status": "paid", "zatca_uuid": "7c2b1d45-zatca-v2-002", "type": "Tax Invoice"},
+        {"id": "CN-2026-004", "date": "2026-11-05", "due_date": "2026-11-05", "subtotal": -120.00, "vat_amount": -18.00, "total": -138.00, "status": "credited", "zatca_uuid": "3a9d8e77-zatca-cn-004", "type": "Credit Note"}
+    ],
+    "credit_account": {
+        "credit_limit": 25000.00,
+        "utilized_credit": 2760.00,
+        "available_credit": 22240.00,
+        "autopay_enabled": True,
+        "autopay_method": "IBAN SA44••••8819",
+        "aging_buckets": {"current_0_30": 2760.00, "past_due_31_60": 0.00, "past_due_61_plus": 0.00}
+    },
+    "shared_documents": [
+        {"id": "DOC-01", "title": "Master Supply Agreement & SLA (2026-2027)", "category": "Signed Contracts & SLAs", "updated_at": "2026-01-15", "file_size": "1.8 MB", "status": "Countersigned"},
+        {"id": "DOC-02", "title": "SFDA & ISO 22000 Cold-Chain Compliance Certificate", "category": "Compliance Certificates", "updated_at": "2026-09-01", "file_size": "940 KB", "status": "Verified"},
+        {"id": "DOC-03", "title": "Mutual Non-Disclosure Agreement (NDA)", "category": "NDAs", "updated_at": "2026-01-10", "file_size": "620 KB", "status": "Executed"},
+        {"id": "DOC-04", "title": "Q3 Cold-Chain Temperature & Delivery Audit Deliverable", "category": "Project Deliverables", "updated_at": "2026-10-05", "file_size": "2.4 MB", "status": "Published"}
+    ],
+    "notifications": [
+        {"id": "NTF-01", "type": "invoice", "title": "Invoice #INV-2026-1101 Due Soon", "message": "Balance of SAR/INR 2,760.00 due on 2026-11-15. Autopay scheduled.", "read": False, "timestamp": "2 hours ago"},
+        {"id": "NTF-02", "type": "shipment", "title": "Order #FMV-8821 Out for Delivery", "message": "Cold-chain vehicle KSA-4412 is en route to your primary dock.", "read": False, "timestamp": "4 hours ago"},
+        {"id": "NTF-03", "type": "ticket", "title": "New Reply on Ticket #SUP-1042", "message": "Dispatch team confirmed 5:30 AM morning delivery window.", "read": True, "timestamp": "1 day ago"},
+        {"id": "NTF-04", "type": "system", "title": "Scheduled Maintenance Notice", "message": "ERP ledger sync maintenance window on Sunday 02:00-02:30 UTC.", "read": True, "timestamp": "2 days ago"}
+    ],
+    "surveys": [],
+    "erp_crm_integrations": [
+        {"connector": "SAP S/4HANA", "key": "sap", "status": "connected", "last_sync": "2026-11-13T07:15:00Z", "entities": ["Inventory", "Contract Pricing", "AR Ledger"]},
+        {"connector": "Microsoft Dynamics 365", "key": "dynamics", "status": "connected", "last_sync": "2026-11-13T07:10:00Z", "entities": ["Orders", "Fulfillment"]},
+        {"connector": "Salesforce CRM", "key": "salesforce", "status": "connected", "last_sync": "2026-11-13T07:05:00Z", "entities": ["Quotes", "Accounts", "Support Tickets"]},
+        {"connector": "QuickBooks Enterprise", "key": "quickbooks", "status": "standby", "last_sync": "2026-11-12T23:00:00Z", "entities": ["Tax Invoices", "Credit Notes"]}
+    ],
+    "white_label": {
+        "custom_domain": "portal.firstmilkventure.com",
+        "company_logo_url": "https://firstmilkventure.com/assets/logo.png",
+        "primary_color": "#059669",
+        "secondary_color": "#064e3b",
+        "font_family": "Inter, sans-serif",
+        "supported_languages": ["en", "ar", "hi", "ml"],
+        "supported_currencies": ["SAR", "INR", "USD", "AED"]
+    },
+    "portal_analytics": {
+        "active_b2b_accounts": 418,
+        "monthly_portal_adoption_pct": 94.2,
+        "ai_ticket_deflection_pct": 68.5,
+        "avg_csat": 4.8,
+        "nps_score": 74
+    },
+    "security_audit_logs": [
+        {"id": "AUD-901", "actor": "admin@firstmilkventure.com", "event": "SSO_SAML_LOGIN_SUCCESS", "ip": "185.120.44.12", "timestamp": "2026-11-13T06:45:00Z"},
+        {"id": "AUD-902", "actor": "finance@firstmilkventure.com", "event": "ZATCA_INVOICE_PDF_DOWNLOAD", "ip": "185.120.44.19", "timestamp": "2026-11-13T07:01:00Z"},
+        {"id": "AUD-903", "actor": "buyer@firstmilkventure.com", "event": "QUOTE_CONVERTED_TO_ORDER", "ip": "185.120.44.22", "timestamp": "2026-11-13T07:18:00Z"}
+    ]
+})
 
-@app.get("/admin/enterprise/portal-status", tags=["Enterprise Portal Admin"])
-def enterprise_portal_status():
-    return PortalAdminIntegrationModule.get_system_status()
+def record_portal_audit(actor: str, event: str, ip: str = "10.0.0.1"):
+    app_config["enterprise_portal"]["security_audit_logs"].insert(0, {
+        "id": f"AUD-{random.randint(1000, 9999)}",
+        "actor": actor,
+        "event": event,
+        "ip": ip,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    })
 
-@app.get("/admin/enterprise/analytics", tags=["Enterprise Portal Admin"])
-def get_enterprise_analytics():
+# --- 1. Security & Account Management Endpoints ---
+@app.post("/portal/auth/sso/initiate", tags=["Portal Security & Account"])
+def initiate_sso_login(body: SSOInitiateRequest):
+    record_portal_audit(body.domain, f"SSO_INITIATED_{body.provider.upper()}")
+    token = jwt.encode({"sub": f"sso@{body.domain}", "sso": True, "exp": datetime.utcnow() + timedelta(minutes=30)}, JWT_SECRET, algorithm=JWT_ALGORITHM)
     return {
-        "portal_adoption_rate": "94.2%",
-        "ticket_deflection_rate": "78.5%",
-        "active_b2b_sessions": 142,
-        "erp_sync_status": "synchronized_realtime",
-        "audit_logs_count": len(app_config.get("audit_logs_db", []))
+        "status": "sso_authenticated",
+        "provider": body.provider,
+        "session_timeout_minutes": app_config["enterprise_portal"]["session_timeout_minutes"],
+        "access_token": token,
+        "user": {"email": f"sso@{body.domain}", "full_name": f"Enterprise SSO User ({body.domain})"}
     }
 
-
-# ==============================================================================
-# ENTERPRISE COMPREHENSIVE COMPANY CUSTOMER PORTAL BACKEND EXTENSIONS
-# ==============================================================================
-@app.get("/enterprise/portal/features", tags=["Enterprise Portal"])
-def get_enterprise_portal_features():
-    return {
-        "status": "active",
-        "features": [
-            "1. Security & Account Management (SSO, 2FA, RBAC, Profile & Tax Registration VAT/GST)",
-            "2. Support & Self-Service (Ticketing, Knowledge Base, AI Live Chat, Community Forum)",
-            "3. Orders, Products & Services (Catalog, Quote-to-Order, RMA Returns & Claims)",
-            "4. Billing, Invoicing & Financials (Invoice Repository, Payment Gateway, Subscription/Credit Controls)",
-            "5. Document Vault & Communication (Shared Document Repository, Notification Alert Center, CSAT/NPS Surveys)",
-            "6. Technical, UX & Backend (ERP/CRM Integration, White-Label Branding, Multilingual, Analytics & Audit Logs)"
-        ]
+@app.post("/portal/auth/2fa", tags=["Portal Security & Account"])
+def configure_two_factor_auth(body: TwoFactorToggleRequest, user_email: str = Depends(verify_jwt)):
+    app_config["enterprise_portal"]["user_security"][user_email] = {
+        "two_factor_enabled": body.enabled,
+        "method": body.method,
+        "updated_at": datetime.utcnow().isoformat()
     }
+    record_portal_audit(user_email, f"2FA_{'ENABLED' if body.enabled else 'DISABLED'}_{body.method.upper()}")
+    return {"message": f"Two-Factor Authentication ({body.method}) {'enabled' if body.enabled else 'disabled'}.", "security": app_config["enterprise_portal"]["user_security"][user_email]}
+
+@app.post("/portal/auth/password-reset/request", tags=["Portal Security & Account"])
+def request_password_reset(body: PasswordResetRequest):
+    reset_code = f"RST-{random.randint(100000, 999999)}"
+    record_portal_audit(body.email, "PASSWORD_RESET_REQUESTED")
+    return {"message": "Password reset workflow initiated. Verification link & code sent.", "reset_token_hint": reset_code}
+
+@app.post("/portal/auth/password-reset/confirm", tags=["Portal Security & Account"])
+def confirm_password_reset(body: PasswordResetConfirmRequest):
+    email_clean = body.email.strip().lower()
+    if email_clean in app_config["users_db"]:
+        app_config["users_db"][email_clean]["password"] = body.new_password
+    record_portal_audit(email_clean, "PASSWORD_RESET_COMPLETED")
+    return {"message": "Password updated successfully. All active sessions refreshed."}
+
+@app.get("/portal/team", tags=["Portal Security & Account"])
+def list_b2b_team_members():
+    return {"team_members": app_config["enterprise_portal"]["b2b_team_members"]}
+
+@app.post("/portal/team", tags=["Portal Security & Account"])
+def add_b2b_team_member(body: B2BTeamMemberInvite):
+    role_perms = {
+        "account_admin": ["orders:place", "invoices:view", "invoices:pay", "team:manage", "quotes:approve"],
+        "buyer": ["orders:place", "quotes:request", "rma:create"],
+        "finance_viewer": ["invoices:view", "invoices:pay", "soa:export"],
+        "support_agent": ["tickets:create", "tickets:view", "kb:read"]
+    }
+    member = {
+        "id": f"TM-{random.randint(10, 99)}",
+        "email": body.email.strip().lower(),
+        "full_name": body.full_name.strip(),
+        "role": body.role,
+        "permissions": body.permissions or role_perms.get(body.role, ["orders:view"]),
+        "status": "active"
+    }
+    app_config["enterprise_portal"]["b2b_team_members"].append(member)
+    record_portal_audit("account_admin", f"RBAC_MEMBER_ADDED_{member['email']}_{body.role}")
+    return {"message": f"Team member {member['full_name']} added with role '{body.role}'.", "member": member}
+
+@app.get("/portal/company-profile", tags=["Portal Security & Account"])
+def get_company_profile(email: str = "customer@firstmilkventure.com"):
+    default_prof = {
+        "company_name": "First Milk Enterprise Partner Ltd.",
+        "tax_registration_number": "300123456700003",
+        "billing_address": "King Abdulaziz Road, Jeddah 21442, KSA",
+        "shipping_address": "Cold-Chain Receiving Dock 4, Ruwais District, Jeddah",
+        "notification_preferences": {"email": True, "sms": True, "in_app": True},
+        "preferred_language": "en",
+        "preferred_currency": "SAR"
+    }
+    return app_config["enterprise_portal"]["company_profiles"].get(email, default_prof)
+
+@app.patch("/portal/company-profile", tags=["Portal Security & Account"])
+def update_company_profile(body: EnterpriseProfileUpdate, email: str = "customer@firstmilkventure.com"):
+    current = get_company_profile(email).copy()
+    for k, v in body.dict(exclude_none=True).items():
+        current[k] = v
+    app_config["enterprise_portal"]["company_profiles"][email] = current
+    record_portal_audit(email, "COMPANY_TAX_PROFILE_UPDATED")
+    return {"message": "Company profile, tax registration & notification preferences saved.", "profile": current}
+
+# --- 2. Support & Self-Service Endpoints ---
+@app.get("/portal/tickets", tags=["Portal Support & Self-Service"])
+def list_portal_tickets():
+    return {"tickets": app_config["enterprise_portal"]["customer_tickets"]}
+
+@app.post("/portal/tickets", tags=["Portal Support & Self-Service"])
+def create_portal_ticket(body: PortalTicketCreate):
+    ticket = {
+        "id": f"SUP-{random.randint(1050, 9999)}",
+        "subject": body.subject,
+        "category": body.category,
+        "priority": body.priority,
+        "status": "open",
+        "attachments": body.attachments,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "history": [{"sender": "customer", "message": body.description, "timestamp": datetime.utcnow().isoformat() + "Z"}]
+    }
+    app_config["enterprise_portal"]["customer_tickets"].insert(0, ticket)
+    record_portal_audit("customer", f"TICKET_CREATED_{ticket['id']}")
+    return {"message": f"Support ticket #{ticket['id']} submitted.", "ticket": ticket}
+
+@app.post("/portal/tickets/{ticket_id}/reply", tags=["Portal Support & Self-Service"])
+def reply_portal_ticket(ticket_id: str, body: PortalTicketReply):
+    for t in app_config["enterprise_portal"]["customer_tickets"]:
+        if t["id"] == ticket_id:
+            t["history"].append({"sender": body.sender_role, "message": body.message, "timestamp": datetime.utcnow().isoformat() + "Z"})
+            return {"message": "Reply appended to ticket history.", "ticket": t}
+    raise HTTPException(status_code=404, detail="Ticket not found.")
+
+@app.get("/portal/knowledge-base", tags=["Portal Support & Self-Service"])
+def search_knowledge_base(q: Optional[str] = None):
+    articles = app_config["enterprise_portal"]["knowledge_base"]
+    if q:
+        ql = q.lower()
+        articles = [a for a in articles if ql in a["title"].lower() or ql in a["summary"].lower() or ql in a["category"].lower()]
+    return {"articles": articles}
+
+@app.post("/portal/ai-assistant", tags=["Portal Support & Self-Service"])
+def chat_with_ai_assistant(body: AIChatMessageRequest):
+    if body.escalate_to_human:
+        record_portal_audit("customer", "LIVE_CHAT_ESCALATED_TO_HUMAN_AGENT")
+        return {
+            "mode": "human_agent_handoff",
+            "agent_name": "Sara Al-Harbi (Senior Enterprise Specialist)",
+            "reply": "You have been connected to a live human support agent with your full account & order context attached."
+        }
+    msg_low = body.message.lower()
+    if "invoice" in msg_low or "zatca" in msg_low or "vat" in msg_low:
+        ans = "You can download ZATCA-compliant PDF/XML tax invoices and Statements of Account directly under Billing & Financials -> Invoice Repository."
+    elif "quote" in msg_low or "price" in msg_low:
+        ans = "Contract tier discounts (10% Enterprise Gold) are automatically applied in the catalog. For bulk custom quotes, open Orders & Quotes -> Request Custom Quote."
+    elif "return" in msg_low or "rma" in msg_low:
+        ans = "You can initiate a self-service RMA return or warranty claim directly from Orders & Tracking -> Initiate RMA."
+    else:
+        ans = "I am your First Milk Enterprise AI Assistant. I can help with live order tracking, ZATCA invoices, contract quotes, or escalate you to a human agent anytime."
+    return {"mode": "ai_bot", "reply": ans}
+
+@app.get("/portal/forum", tags=["Portal Support & Self-Service"])
+def get_community_forum():
+    return {"posts": app_config["enterprise_portal"]["forum_posts"]}
+
+@app.post("/portal/forum", tags=["Portal Support & Self-Service"])
+def create_forum_post(body: ForumPostCreate):
+    post = {
+        "id": f"FRM-{random.randint(10, 999)}",
+        "title": body.title,
+        "category": body.category,
+        "author": "Enterprise Portal Member",
+        "votes": 1,
+        "replies": 0,
+        "body": body.body
+    }
+    app_config["enterprise_portal"]["forum_posts"].insert(0, post)
+    return {"message": "Published to Community Forum.", "post": post}
+
+@app.post("/portal/forum/{post_id}/vote", tags=["Portal Support & Self-Service"])
+def vote_forum_post(post_id: str):
+    for p in app_config["enterprise_portal"]["forum_posts"]:
+        if p["id"] == post_id:
+            p["votes"] += 1
+            return {"message": "Vote recorded.", "votes": p["votes"]}
+    raise HTTPException(status_code=404, detail="Post not found.")
+
+# --- 3. Orders, Products & Services Endpoints ---
+@app.get("/portal/catalog/contract-pricing", tags=["Portal Commerce & Orders"])
+def get_contract_catalog():
+    base_products = get_products()
+    pricing_map = app_config["enterprise_portal"]["contract_pricing"]
+    enriched = []
+    for p in base_products:
+        pid = p.get("id")
+        cp = pricing_map.get(pid, {"contract_price": p.get("price", 0), "discount_pct": 0, "tier": "Standard"})
+        enriched.append({**p, **cp})
+    return {"catalog": enriched}
+
+@app.get("/portal/quotes", tags=["Portal Commerce & Orders"])
+def list_quotes():
+    return {"quotes": app_config["enterprise_portal"]["quotes"]}
+
+@app.post("/portal/quotes", tags=["Portal Commerce & Orders"])
+def create_custom_quote(body: QuoteRequestCreate):
+    est_total = sum(float(i.get("qty", 1)) * float(i.get("unit_price", 100.0)) for i in body.items)
+    quote = {
+        "id": f"QT-2026-{random.randint(100, 999)}",
+        "title": f"Custom Supply Proposal ({body.delivery_schedule})",
+        "items": body.items,
+        "total_amount": round(est_total, 2),
+        "status": "pending_approval",
+        "valid_until": (datetime.utcnow() + timedelta(days=14)).strftime("%Y-%m-%d")
+    }
+    app_config["enterprise_portal"]["quotes"].insert(0, quote)
+    record_portal_audit("buyer", f"QUOTE_REQUESTED_{quote['id']}")
+    return {"message": f"Custom quote {quote['id']} generated.", "quote": quote}
+
+@app.post("/portal/quotes/{quote_id}/approve-to-order", tags=["Portal Commerce & Orders"])
+def approve_and_convert_quote(quote_id: str, body: QuoteApproveRequest):
+    for q in app_config["enterprise_portal"]["quotes"]:
+        if q["id"] == quote_id:
+            q["status"] = "converted_to_order"
+            q["signed_by"] = body.signer_name
+            q["signature_hash"] = body.signature_hash
+            order_id = f"FMV-ORD-{random.randint(5000, 9999)}"
+            q["converted_order_id"] = order_id
+            record_portal_audit(body.signer_name, f"QUOTE_{quote_id}_SIGNED_AND_CONVERTED_{order_id}")
+            return {"message": f"Quote {quote_id} digitally signed and converted into Order #{order_id}.", "order_id": order_id, "quote": q}
+    raise HTTPException(status_code=404, detail="Quote not found.")
+
+@app.get("/portal/rma", tags=["Portal Commerce & Orders"])
+def list_rma_claims():
+    return {"claims": app_config["enterprise_portal"]["rma_claims"]}
+
+@app.post("/portal/rma", tags=["Portal Commerce & Orders"])
+def submit_rma_claim(body: RMAClaimCreate):
+    claim = {
+        "id": f"RMA-{random.randint(400, 999)}",
+        "order_id": body.order_id,
+        "claim_type": body.claim_type,
+        "reason": body.reason,
+        "items": body.items,
+        "status": "under_review",
+        "created_at": datetime.utcnow().isoformat() + "Z"
+    }
+    app_config["enterprise_portal"]["rma_claims"].insert(0, claim)
+    record_portal_audit("customer", f"RMA_CLAIM_SUBMITTED_{claim['id']}")
+    return {"message": f"RMA Request #{claim['id']} created for Order #{body.order_id}.", "claim": claim}
+
+# --- 4. Billing, Invoicing & Financials Endpoints ---
+@app.get("/portal/billing/invoices", tags=["Portal Billing & Financials"])
+def get_invoices_and_soa():
+    return {
+        "invoices": app_config["enterprise_portal"]["invoices"],
+        "credit_account": app_config["enterprise_portal"]["credit_account"]
+    }
+
+@app.post("/portal/billing/pay", tags=["Portal Billing & Financials"])
+def process_online_payment(body: PaymentProcessRequest):
+    for inv in app_config["enterprise_portal"]["invoices"]:
+        if inv["id"] == body.invoice_id:
+            inv["status"] = "paid"
+            inv["paid_via"] = body.method
+    if body.enable_autopay:
+        app_config["enterprise_portal"]["credit_account"]["autopay_enabled"] = True
+    ca = app_config["enterprise_portal"]["credit_account"]
+    ca["utilized_credit"] = max(0.0, round(ca["utilized_credit"] - body.amount, 2))
+    ca["available_credit"] = round(ca["credit_limit"] - ca["utilized_credit"], 2)
+    record_portal_audit("finance_user", f"INVOICE_PAID_{body.invoice_id}_{body.method.upper()}")
+    return {"message": f"Payment of {body.amount:.2f} processed via {body.method}.", "credit_account": ca}
+
+@app.patch("/portal/billing/credit-subscription", tags=["Portal Billing & Financials"])
+def update_credit_or_subscription(body: CreditLimitActionRequest):
+    ca = app_config["enterprise_portal"]["credit_account"]
+    if body.requested_limit is not None:
+        ca["credit_limit"] = body.requested_limit
+        ca["available_credit"] = round(ca["credit_limit"] - ca["utilized_credit"], 2)
+    if body.plan_tier:
+        ca["subscription_tier"] = body.plan_tier
+    record_portal_audit("account_admin", "CREDIT_OR_PLAN_TIER_UPDATED")
+    return {"message": "Subscription plan & credit limit settings updated.", "credit_account": ca}
+
+# --- 5. Document Vault & Communication Endpoints ---
+@app.get("/portal/documents", tags=["Portal Document Vault & Comms"])
+def list_shared_documents():
+    return {"documents": app_config["enterprise_portal"]["shared_documents"]}
+
+@app.get("/portal/notifications", tags=["Portal Document Vault & Comms"])
+def list_portal_notifications():
+    return {"notifications": app_config["enterprise_portal"]["notifications"]}
+
+@app.post("/portal/notifications/mark-read", tags=["Portal Document Vault & Comms"])
+def mark_all_notifications_read():
+    for n in app_config["enterprise_portal"]["notifications"]:
+        n["read"] = True
+    return {"message": "All notifications marked as read."}
+
+@app.post("/portal/surveys", tags=["Portal Document Vault & Comms"])
+def submit_csat_nps_survey(body: SurveySubmitRequest):
+    entry = {
+        "id": f"SRV-{random.randint(100, 999)}",
+        "ticket_or_order_id": body.ticket_or_order_id,
+        "csat_score": body.csat_score,
+        "nps_score": body.nps_score,
+        "comments": body.comments,
+        "submitted_at": datetime.utcnow().isoformat() + "Z"
+    }
+    app_config["enterprise_portal"]["surveys"].insert(0, entry)
+    return {"message": "Thank you for your CSAT & NPS feedback!", "survey": entry}
+
+# --- 6. Technical, UX & Backend Requirements Endpoints ---
+@app.get("/portal/enterprise/system-status", tags=["Portal Enterprise Backend"])
+def get_enterprise_system_status():
+    return {
+        "erp_crm_integrations": app_config["enterprise_portal"]["erp_crm_integrations"],
+        "white_label": app_config["enterprise_portal"]["white_label"],
+        "portal_analytics": app_config["enterprise_portal"]["portal_analytics"],
+        "security_audit_logs": app_config["enterprise_portal"]["security_audit_logs"][:20]
+    }
+
+@app.post("/portal/enterprise/erp-sync", tags=["Portal Enterprise Backend"])
+def trigger_erp_bidirectional_sync(body: ERPSyncTriggerRequest):
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    for conn in app_config["enterprise_portal"]["erp_crm_integrations"]:
+        if conn["key"] == body.connector.lower():
+            conn["status"] = "connected"
+            conn["last_sync"] = now_iso
+    record_portal_audit("system_admin", f"ERP_BIDIRECTIONAL_SYNC_{body.connector.upper()}")
+    return {"message": f"Bidirectional sync completed with {body.connector.upper()} for {', '.join(body.sync_entities)}.", "synced_at": now_iso}
+
+@app.patch("/portal/enterprise/white-label", tags=["Portal Enterprise Backend"])
+def update_white_label_branding(body: WhiteLabelUpdateRequest):
+    app_config["enterprise_portal"]["white_label"].update(body.dict())
+    record_portal_audit("system_admin", f"WHITE_LABEL_UPDATED_{body.custom_domain}")
+    return {"message": "White-label domain, logo, colors, and typography updated.", "white_label": app_config["enterprise_portal"]["white_label"]}
