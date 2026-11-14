@@ -41,7 +41,7 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SU
 app_config = {
     "admin_secret_key": os.getenv("ADMIN_SECRET_KEY", "Firstmilk3211234"),
     "drivers": {
-        "DriverMilk2026": {"name": "Primary Driver", "phone": "+966500000000", "address": "Jeddah Zone 1"}
+        "DriverMilk2026": {"name": "Primary Driver", "phone": "+966500000000", "address": "Kerala Zone 1 (Kochi / Changanassery)"}
     },
     "users_db": {}  # In-memory customer account store fallback
 }
@@ -242,14 +242,22 @@ def request_otp(body: RequestOTP):
     except Exception:
         pass
 
-    return {"message": "Verification code sent to your email."}
+    if "otps_store" not in app_config:
+        app_config["otps_store"] = {}
+    app_config["otps_store"][clean_email] = otp
+    return {"message": "Verification code sent to your email/phone.", "otp_dispatched": True}
 
 @app.post("/auth/verify-otp", tags=["Customer Auth"])
 def verify_otp(body: VerifyOTP):
     clean_email = body.email.strip().lower()
     if not supabase:
+        stored = app_config.get("otps_store", {}).get(clean_email)
+        if stored and str(stored).strip() != body.otp.strip():
+            raise HTTPException(status_code=400, detail="Invalid OTP verification code. Please check and try again.")
+        if stored:
+            del app_config["otps_store"][clean_email]
         token = jwt.encode({"sub": clean_email, "exp": datetime.utcnow() + timedelta(days=7)}, JWT_SECRET, algorithm=JWT_ALGORITHM)
-        return {"message": "Authentication successful.", "access_token": token}
+        return {"message": "OTP verification successful.", "access_token": token}
 
     res = supabase.table("auth_otps").select("*").eq("email", clean_email).execute()
     records = res.data
@@ -289,21 +297,15 @@ def update_user_profile(body: UpdateProfileRequest, user_email: str = Depends(ve
 
 @app.get("/products", tags=["Products Catalog"])
 def get_products():
-    if not supabase:
-        return [
-            {"id": "prod-1", "name": "Pure Cow Ghee", "description": "Pure organic farm fresh dairy product.", "price": 350.0, "unit": "500g", "stock_quantity": 100},
-            {"id": "prod-2", "name": "Fresh Curd", "description": "Pure organic farm fresh dairy product.", "price": 40.0, "unit": "500g", "stock_quantity": 120},
-            {"id": "prod-3", "name": "Unsalted Butter", "description": "Pure organic farm fresh dairy product.", "price": 120.0, "unit": "250g", "stock_quantity": 80}
-        ]
-    try:
-        res = supabase.table("products").select("*").execute()
-        return res.data or []
-    except Exception:
-        return [
-            {"id": "prod-1", "name": "Pure Cow Ghee", "description": "Pure organic farm fresh dairy product.", "price": 350.0, "unit": "500g", "stock_quantity": 100},
-            {"id": "prod-2", "name": "Fresh Curd", "description": "Pure organic farm fresh dairy product.", "price": 40.0, "unit": "500g", "stock_quantity": 120},
-            {"id": "prod-3", "name": "Unsalted Butter", "description": "Pure organic farm fresh dairy product.", "price": 120.0, "unit": "250g", "stock_quantity": 80}
-        ]
+    if supabase:
+        try:
+            res = supabase.table("products").select("*").execute()
+            if res.data:
+                app_config["products_catalog"] = res.data
+                return res.data
+        except Exception:
+            pass
+    return app_config["products_catalog"]
 
 @app.post("/subscriptions", tags=["Subscriptions"])
 def create_subscription(sub: SubscriptionCreate, user_email: str = Depends(verify_jwt)):
@@ -371,7 +373,7 @@ def get_driver_routes(zone_id: Optional[str] = None, delivery_date: Optional[str
             {
                 "id": "FMV-1001",
                 "order_number": "FMV-1001",
-                "user_email": "Hail Street, Ruwais District, Jeddah",
+                "user_email": "MG Road, Kochi / Changanassery, Kerala, India",
                 "items_summary": "2x Fresh Organic Milk (1L), 1x Paneer (500g)",
                 "quantity": 3,
                 "cod_amount": 45.00,
@@ -1369,7 +1371,7 @@ def get_company_profile(email: str = "customer@firstmilkventure.com"):
         "shipping_address": "Cold-Chain Receiving Dock 4, Ruwais District, Jeddah",
         "notification_preferences": {"email": True, "sms": True, "in_app": True},
         "preferred_language": "en",
-        "preferred_currency": "SAR"
+        "preferred_currency": "INR"
     }
     return app_config["enterprise_portal"]["company_profiles"].get(email, default_prof)
 
@@ -1614,3 +1616,115 @@ def update_white_label_branding(body: WhiteLabelUpdateRequest):
     app_config["enterprise_portal"]["white_label"].update(body.dict())
     record_portal_audit("system_admin", f"WHITE_LABEL_UPDATED_{body.custom_domain}")
     return {"message": "White-label domain, logo, colors, and typography updated.", "white_label": app_config["enterprise_portal"]["white_label"]}
+
+
+# ==============================================================================
+# PATCH: INVENTORY STOCK UPDATES, AUTOMATIC CHECKOUT STOCK DEDUCTION & KERALA/INR
+# ==============================================================================
+class ProductStockUpdate(BaseModel):
+    stock_quantity: int
+    price: Optional[float] = None
+
+class CheckoutOrderItem(BaseModel):
+    product_id: str
+    name: str
+    quantity: int
+    price: float
+
+class CustomerCheckoutRequest(BaseModel):
+    customer_email: Optional[str] = ""
+    customer_phone: str
+    customer_name: str
+    delivery_address: str = "Kerala, India"
+    items: List[CheckoutOrderItem]
+    total_amount: float
+    currency: str = "INR"
+    payment_method: str = "UPI / Online (INR)"
+
+if "products_catalog" not in app_config:
+    app_config["products_catalog"] = [
+        {"id": "prod-1", "name": "Pure Cow Ghee", "description": "Pure organic farm fresh dairy product (Kerala).", "price": 350.0, "unit": "500g", "stock_quantity": 100, "currency": "INR"},
+        {"id": "prod-2", "name": "Fresh Curd", "description": "Pure organic farm fresh dairy product (Kerala).", "price": 40.0, "unit": "500g", "stock_quantity": 120, "currency": "INR"},
+        {"id": "prod-3", "name": "Unsalted Butter", "description": "Pure organic farm fresh dairy product (Kerala).", "price": 120.0, "unit": "250g", "stock_quantity": 80, "currency": "INR"},
+        {"id": "prod-4", "name": "Farm Fresh Milk", "description": "Daily morning fresh milk from Kerala farms.", "price": 60.0, "unit": "1 Liter", "stock_quantity": 250, "currency": "INR"}
+    ]
+
+if "deliveries_state" not in app_config:
+    app_config["deliveries_state"] = {}
+
+@app.patch("/admin/products/{product_id}/stock", tags=["Admin Controls"], dependencies=[Depends(verify_admin_access)])
+def update_product_stock_quantity(product_id: str, body: ProductStockUpdate):
+    if body.stock_quantity < 0:
+        raise HTTPException(status_code=400, detail="Stock quantity cannot be negative.")
+    updated = None
+    for prod in app_config["products_catalog"]:
+        if str(prod["id"]) == str(product_id):
+            prod["stock_quantity"] = body.stock_quantity
+            if body.price is not None:
+                prod["price"] = body.price
+            updated = prod
+            break
+    if supabase:
+        try:
+            upd = {"stock_quantity": body.stock_quantity}
+            if body.price is not None:
+                upd["price"] = body.price
+            res = supabase.table("products").update(upd).eq("id", product_id).execute()
+            if res.data:
+                updated = res.data[0]
+        except Exception:
+            pass
+    if not updated:
+        raise HTTPException(status_code=404, detail="Product not found in catalog.")
+    return {"status": "success", "message": "Available stock updated successfully.", "product": updated}
+
+@app.post("/orders/checkout", tags=["Orders & Checkout"])
+def process_customer_checkout(order: CustomerCheckoutRequest):
+    # 1. Validate & automatically deduct stock for each purchased item
+    for line in order.items:
+        prod = next((p for p in app_config["products_catalog"] if str(p["id"]) == str(line.product_id)), None)
+        if prod:
+            if prod.get("stock_quantity", 0) < line.quantity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Insufficient stock for {prod['name']} (Only {prod.get('stock_quantity', 0)} available)."
+                )
+            prod["stock_quantity"] -= line.quantity
+            if supabase:
+                try:
+                    supabase.table("products").update({"stock_quantity": prod["stock_quantity"]}).eq("id", prod["id"]).execute()
+                except Exception:
+                    pass
+
+    # 2. Create delivery record synced to Driver Portal & Admin Portal
+    order_num = f"FMV-{random.randint(1000, 9999)}"
+    delivery_otp = generate_order_otp(order_num)
+    items_summary = ", ".join([f"{i.quantity}x {i.name}" for i in order.items])
+    delivery_record = {
+        "id": order_num,
+        "order_number": order_num,
+        "user_email": order.customer_email or order.customer_phone,
+        "customer_name": order.customer_name,
+        "customer_phone": order.customer_phone,
+        "delivery_address": order.delivery_address or "Kerala, India",
+        "items_summary": items_summary,
+        "quantity": sum(i.quantity for i in order.items),
+        "total_amount": order.total_amount,
+        "cod_amount": order.total_amount if "COD" in order.payment_method.upper() else 0.0,
+        "currency": "INR",
+        "status": "Out for Delivery",
+        "delivery_date": datetime.utcnow().strftime("%Y-%m-%d"),
+        "delivery_otp": delivery_otp
+    }
+    app_config["deliveries_state"][order_num] = delivery_record
+    if supabase:
+        try:
+            supabase.table("deliveries").insert(delivery_record).execute()
+        except Exception:
+            pass
+
+    return {
+        "status": "success",
+        "message": "Order confirmed and inventory stock automatically deducted.",
+        "order": delivery_record
+    }
