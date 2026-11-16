@@ -8,6 +8,7 @@ import hmac
 import inspect
 import io
 import json
+import math
 import os
 import re
 import secrets
@@ -270,10 +271,12 @@ def issue_challenge(s, u, purpose, pending=None, invitation=''):
         del s['challenges'][k]
     cid, code = uid('CH'), f'{secrets.randbelow(1000000):06d}'
     send_code(email,code)
+    sent_at = time.time()
     s['challenges'][cid] = dict(email=email,portal=u['portal'],purpose=purpose,pending=pending,
         invitation=invitation, code_hash=hmac.new(SECRET.encode(),(cid+code).encode(),'sha256').hexdigest(),
-        expires=time.time()+300,attempts=0,sent_at=time.time())
-    return {'challenge_id':cid,'otp_required':True,'message':'Verification code sent to your registered email.','expires_in':300}
+        expires=sent_at+300,attempts=0,sent_at=sent_at)
+    return {'challenge_id':cid,'otp_required':True,'message':'Verification code sent to your registered email.','expires_in':300,
+            'server_time':sent_at,'resend_available_at':sent_at+60,'expires_at':sent_at+300}
 
 
 def session(s,u):
@@ -452,7 +455,15 @@ def dispatch(s, request, body=None):
     if path=='/auth/request-otp':
         ch=s['challenges'].get(body.challenge_id)
         require(ch and ch['expires']>time.time(),'Verification expired. Start sign-in again.',400)
-        require(time.time()-ch['sent_at']>=60,'Wait 60 seconds before requesting another code.',429)
+        server_time = time.time()
+        resend_available_at = ch['sent_at'] + 60
+        if server_time < resend_available_at:
+            raise HTTPException(429, 'Wait 60 seconds before requesting another code.', headers={
+                'Retry-After': str(math.ceil(resend_available_at-server_time)),
+                'X-Server-Time': str(server_time),
+                'X-Resend-Available-At': str(resend_available_at),
+                'X-OTP-Expires-At': str(ch['expires']),
+            })
         u=ch['pending'] or s['users'].get(ch['portal']+':'+ch['email'])
         return issue_challenge(s,u,ch['purpose'],ch['pending'],ch.get('invitation',''))
     if path=='/auth/verify-otp':
@@ -891,7 +902,7 @@ def install(app, legacy):
     from fastapi.middleware.cors import CORSMiddleware
     app.user_middleware=[]
     app.add_middleware(CORSMiddleware,allow_origins=origins,allow_credentials=False,
-        allow_methods=['GET','POST','PATCH','DELETE','OPTIONS'],allow_headers=['Authorization','Content-Type','Idempotency-Key'],expose_headers=['Content-Disposition'])
+        allow_methods=['GET','POST','PATCH','DELETE','OPTIONS'],allow_headers=['Authorization','Content-Type','Idempotency-Key'],expose_headers=['Content-Disposition','Retry-After','X-Server-Time','X-Resend-Available-At','X-OTP-Expires-At'])
 
     @app.middleware('http')
     async def security_headers(request,call_next):

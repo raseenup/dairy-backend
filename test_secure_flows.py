@@ -334,3 +334,97 @@ def test_validation_does_not_echo_passwords_and_body_limit():
     assert 'sensitive-password' not in response.text
     response=client.post('/auth/signup',content=b'x'*3000001,headers={'Content-Type':'application/json'})
     assert response.status_code==413
+
+
+def test_challenge_deadlines_resend_boundary_and_retry_headers(monkeypatch):
+    clock = [time.time()]
+    monkeypatch.setattr(sec.time, 'time', lambda: clock[0])
+    sent = []
+    monkeypatch.setattr(sec, 'send_code', lambda email, code: sent.append(email))
+    response = signup()
+    assert response.status_code == 200
+    challenge = response.json()
+    assert challenge['expires_in'] == 300
+    assert challenge['server_time'] == clock[0]
+    assert challenge['resend_available_at'] == clock[0] + 60
+    assert challenge['expires_at'] == clock[0] + 300
+    challenge_id = challenge['challenge_id']
+    with sec.transaction() as state:
+        stored = state['challenges'][challenge_id]
+        assert stored['sent_at'] == challenge['server_time']
+        assert stored['expires'] == challenge['expires_at']
+    clock[0] += 10.25
+    too_early = client.post('/auth/request-otp', json={'challenge_id': challenge_id},
+                            headers={'Origin': 'https://firstmilkventure.com'})
+    assert too_early.status_code == 429
+    assert too_early.json() == {'detail': 'Wait 60 seconds before requesting another code.'}
+    assert too_early.headers['Retry-After'] == '50'
+    assert float(too_early.headers['X-Server-Time']) == clock[0]
+    assert float(too_early.headers['X-Resend-Available-At']) == challenge['resend_available_at']
+    assert float(too_early.headers['X-OTP-Expires-At']) == challenge['expires_at']
+    exposed = too_early.headers['Access-Control-Expose-Headers'].lower()
+    for header in ['retry-after', 'x-server-time', 'x-resend-available-at', 'x-otp-expires-at']:
+        assert header in exposed
+    assert len(sent) == 1
+    clock[0] = challenge['resend_available_at']
+    resent = client.post('/auth/request-otp', json={'challenge_id': challenge_id})
+    assert resent.status_code == 200
+    replacement = resent.json()
+    assert replacement['challenge_id'] != challenge_id
+    assert replacement['server_time'] == clock[0]
+    assert replacement['resend_available_at'] == clock[0] + 60
+    assert replacement['expires_at'] == clock[0] + 300
+    assert len(sent) == 2
+    with sec.transaction() as state:
+        assert challenge_id not in state['challenges']
+        assert replacement['challenge_id'] in state['challenges']
+    clock[0] = replacement['expires_at']
+    expired = client.post('/auth/request-otp', json={'challenge_id': replacement['challenge_id']})
+    assert expired.status_code == 400
+    assert expired.json()['detail'] == 'Verification expired. Start sign-in again.'
+    assert len(sent) == 2
+
+
+@pytest.mark.parametrize('portal', ['customer', 'admin', 'driver'])
+def test_saved_session_authenticates_fresh_client_without_changing_lifetime(portal):
+    headers, user = account(portal=portal)
+    with sec.transaction() as state:
+        sessions_before = dict(state['sessions'])
+    with TestClient(app) as fresh_client:
+        for _ in range(2):
+            response = fresh_client.get('/auth/session', headers=headers)
+            assert response.status_code == 200
+            assert response.json()['user']['id'] == user['id']
+            assert response.json()['user']['portal'] == portal
+        assert fresh_client.get('/sync', headers=headers).status_code == 200
+    with sec.transaction() as state:
+        assert state['sessions'] == sessions_before
+    claims = sec.jwt.decode(headers['Authorization'][7:], sec.SECRET, algorithms=['HS256'],
+                            issuer='first-milk-venture', audience='fmv-portals')
+    assert claims['exp'] - claims['iat'] == sec.SESSION_SECONDS == 1800
+
+
+def test_persisted_session_survives_fresh_backend_process():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    headers, _ = account()
+    script = """
+import sys
+sys.path.insert(0, sys.argv[1])
+from main import app
+from fastapi.testclient import TestClient
+with TestClient(app) as client:
+    response = client.get('/auth/session', headers={'Authorization': sys.stdin.read()})
+    assert response.status_code == 200, response.text
+    assert response.json()['user']['portal'] == 'customer'
+print('persisted-session-valid')
+"""
+    environment = {'PATH': os.defpath, 'DATABASE_URL': '', 'FMV_DB_PATH': str(sec.DB_PATH),
+                   'JWT_SECRET': sec.SECRET, 'APP_ENV': 'test', 'PYTHON_DOTENV_DISABLED': '1'}
+    result = subprocess.run([sys.executable, '-I', '-c', script, str(Path(__file__).resolve().parent)],
+                            input=headers['Authorization'], env=environment,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'persisted-session-valid'
