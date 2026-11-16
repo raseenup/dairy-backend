@@ -26,5 +26,9 @@ def test_payment_webhook():
         "status": "paid"
     }
     response = client.post("/webhooks/payment", json=payload)
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
+    # Original unauthenticated-success assertions are retained for traceability:
+    # assert response.status_code == 200
+    # assert response.json()["status"] == "success"
+    # An unsigned webhook must never be accepted as a real payment.
+    assert response.status_code == 503
+    assert "not configured" in response.json()["detail"]
