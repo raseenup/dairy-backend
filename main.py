@@ -10,53 +10,6 @@ import jwt
 from supabase import create_client, Client
 import resend
 
-from fastapi.testclient import TestClient
-from main import app, products_db
-client = TestClient(app)
-def test_health_check():
-response = client.get("/")
-assert response.status_code == 200
-data = response.json()
-assert data["region"] == "Kerala, India"
-assert data["currency"] == "INR (₹)"
-assert "X-Content-Type-Options" in response.headers
-def test_otp_auth_flow():
-email = "testuser.kochi@firstmilkventure.in"
-req_res = client.post("/auth/request-otp", json={
-"email": email,
-"purpose": "signup",
-"name": "Rahul Nair",
-"city": "Kochi"
-})
-assert req_res.status_code == 200
-otp = req_res.json()["dev_otp_preview"]
-assert len(otp) == 6
-ver_res = client.post("/auth/verify-otp", json={
-"email": email,
-"otp": otp,
-"name": "Rahul Nair",
-"city": "Kochi"
-})
-assert ver_res.status_code == 200
-ver_data = ver_res.json()
-assert ver_data["success"] is True
-assert "access_token" in ver_data
-assert ver_data["user"]["region"] == "Kochi, Kerala"
-def test_automatic_inventory_deduction():
-initial_stock = products_db["PROD-001"]["stock_qty"]
-order_qty = 3
-order_res = client.post("/orders", json={
-"customer_email": "customer@kottayam.in",
-"customer_name": "Meera Krishnan",
-"delivery_address": "14 Baker Junction, Kottayam, Kerala",
-"city": "Kottayam",
-"payment_method": "UPI",
-"items": [{"product_id": "PROD-001", "quantity": order_qty}]
-})
-assert order_res.status_code == 201
-assert products_db["PROD-001"]["stock_qty"] == initial_stock - order_qty
-assert "₹" in order_res.json()["order"]["formatted_total"]
-
 app = FastAPI(
     title="First Milk Venture API (Enterprise Edition)",
     description="Enterprise Backend for First Milk Venture: Separate Links, Secure Auth without Hint Leaks, Unique Driver Keys & Order Reassignment.",
