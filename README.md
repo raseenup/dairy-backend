@@ -1,3 +1,17 @@
+# First Milk Venture v8 — active backend
+
+Read [SETUP.md](SETUP.md) before deployment. This is the current runbook; the original README is preserved below as historical package context.
+
+All three portals use authenticated backend operations and persistent storage. Run `uvicorn main:app --host 0.0.0.0 --port 8000` from the repository root after installing `requirements.txt` and setting a unique JWT secret plus verified email delivery credentials. Production PostgreSQL setup uses the additive `migration_v8_security.sql`.
+
+The active security/persistence routes are installed by `secure_backend.py` at the end of `main.py`. Every original request-schema class remains in source and OpenAPI. Old shared-key login routes and fake success responses are superseded. Individual staff invitations are created with `python manage.py your-email@example.com --role super_admin`; driver signup requires administrator approval.
+
+Use `python -m pytest -q` for the isolated backend tests. Do not deploy test fixtures or enable test mail delivery in production. Online payments require configured Razorpay credentials and signature verification; unconfigured integrations do not pretend to succeed.
+
+---
+
+## Original README retained for reference (superseded instructions)
+
 # First Milk Venture — Multi-Page Portals Package
 
 ## Files Included

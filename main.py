@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -1728,3 +1731,12 @@ def process_customer_checkout(order: CustomerCheckoutRequest):
         "message": "Order confirmed and inventory stock automatically deducted.",
         "order": delivery_record
     }
+
+# ============================================================================
+# v8 ACTIVE SECURITY AND PERSISTENCE LAYER
+# All original schema classes, sections and source above remain available.
+# Active HTTP routes are installed once below to eliminate insecure legacy paths.
+# Run: uvicorn main:app --host 0.0.0.0 --port 8000
+# ============================================================================
+from secure_backend import install as install_secure_backend
+install_secure_backend(app, globals())
