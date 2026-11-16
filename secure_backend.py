@@ -27,6 +27,7 @@ from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, TypeAdapter
 from PIL import Image
+from email_templates import build_email
 
 IST = ZoneInfo('Asia/Kolkata')
 ROOT = Path(__file__).resolve().parent
@@ -184,15 +185,28 @@ def audit(s, actor, event, object_id=''):
 
 
 def send_code(email, code):
-    api_key = os.getenv('RESEND_API_KEY','')
+    api_key = os.getenv('RESEND_API_KEY', '')
     require(bool(api_key), 'Email delivery is not configured. The administrator must set RESEND_API_KEY.', 503)
+    content = build_email('verification', code=code)
     try:
-        r = httpx.post('https://api.resend.com/emails',headers={'Authorization':'Bearer '+api_key},json={
-            'from':os.getenv('AUTH_EMAIL_SENDER','First Milk Venture Auth <auth@firstmilkventure.com>'),
-            'to':[email], 'subject':'First Milk Venture verification code',
-            'text':f'Your verification code is {code}. It expires in 5 minutes. Do not share this sign-in code.'},timeout=15)
+        r = httpx.post(
+            'https://api.resend.com/emails',
+            headers={'Authorization': 'Bearer ' + api_key},
+            json={
+                'from': os.getenv(
+                    'AUTH_EMAIL_SENDER',
+                    'First Milk Venture Auth <auth@firstmilkventure.com>'
+                ),
+                'to': [email],
+                'subject': content['subject'],
+                'html': content['html'],
+                'text': content['text'],
+            },
+            timeout=15,
+        )
         require(r.is_success, 'Unable to deliver verification email. Please try later.', 503)
-    except httpx.HTTPError: raise HTTPException(503,'Unable to deliver verification email. Please try later.')
+    except httpx.HTTPError:
+        raise HTTPException(503, 'Unable to deliver verification email. Please try later.')
 
 class Signup(BaseModel):
     email: EmailStr
