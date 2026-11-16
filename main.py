@@ -1740,3 +1740,8 @@ def process_customer_checkout(order: CustomerCheckoutRequest):
 # ============================================================================
 from secure_backend import install as install_secure_backend
 install_secure_backend(app, globals())
+from fastapi import Response
+
+@app.head("/", include_in_schema=False)
+async def head_root():
+    return Response(status_code=200)
