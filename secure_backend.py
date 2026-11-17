@@ -43,6 +43,7 @@ PRODUCTION = os.getenv('APP_ENV', 'development') == 'production'
 if PRODUCTION and not DATABASE_URL and os.getenv('ALLOW_PRODUCTION_SQLITE') != 'true':
     raise RuntimeError('Production requires DATABASE_URL (PostgreSQL), or explicit ALLOW_PRODUCTION_SQLITE=true with a persistent disk.')
 SESSION_SECONDS = 1800
+ACCOUNT_EXISTS_MESSAGE = 'An account with this email or mobile number already exists in this portal. Sign in or reset your password.'
 ROLES = {'super_admin', 'operations_manager', 'finance', 'customer_support'}
 PERMISSIONS = {
     'super_admin': {'*'},
@@ -432,10 +433,10 @@ def dispatch(s, request, body=None):
     if path=='/config': return {'country':'India','state':'Kerala','currency':'INR','timezone':'Asia/Kolkata','online_payments':bool(os.getenv('RAZORPAY_KEY_ID') and os.getenv('RAZORPAY_KEY_SECRET'))}
     if path=='/auth/signup':
         valid_password(body.password);email=str(body.email).lower();key=body.portal+':'+email
-        require(key not in s['users'],'An account already exists. Sign in or reset your password.',409)
+        require(key not in s['users'],ACCOUNT_EXISTS_MESSAGE,409)
         phone=phone_india(body.phone)
         require(clean_text(body.full_name,150) and clean_text(body.address,1000),'Name and address cannot be blank.',422)
-        require(not any(u['portal']==body.portal and u['phone']==phone for u in s['users'].values()),'Mobile number already registered.',409)
+        require(not any(u['portal']==body.portal and u['phone']==phone for u in s['users'].values()),ACCOUNT_EXISTS_MESSAGE,409)
         role={'customer':'customer','driver':'driver','admin':'operations_manager'}[body.portal]
         if body.portal=='admin':
             inv=s['invites'].get(hashlib.sha256(body.invitation.encode()).hexdigest())
@@ -480,7 +481,11 @@ def dispatch(s, request, body=None):
         u=ch['pending'] or s['users'].get(ch['portal']+':'+ch['email'])
         require(u is not None,'Account not found.',404)
         if ch['purpose']=='signup':
-            require(ch['portal']+':'+ch['email'] not in s['users'],'Account already created.',409)
+            require(ch['portal']+':'+ch['email'] not in s['users'],ACCOUNT_EXISTS_MESSAGE,409)
+            # Another pending signup may have verified this mobile while this
+            # code was in transit. Recheck ownership in the same transaction.
+            require(not any(existing['portal']==u['portal'] and existing['phone']==u['phone']
+                            for existing in s['users'].values()),ACCOUNT_EXISTS_MESSAGE,409)
             if ch['portal']=='admin':
                 inv=s['invites'].get(hashlib.sha256(ch['invitation'].encode()).hexdigest())
                 require(inv and not inv.get('used') and inv['expires']>time.time(),'Invitation is no longer valid.',403)
