@@ -7,6 +7,12 @@ request-schema classes remain in place.
 
 ## Administrator invitation field
 
+**Render Free without Shell:** follow [FREE_RENDER_ADMIN.md](FREE_RENDER_ADMIN.md).
+Set `BOOTSTRAP_ADMIN_EMAIL` and a private `BOOTSTRAP_ADMIN_INVITATION` in the
+hosting Environment settings, deploy, then use that code in the signup form.
+Normal email OTP verification remains required. Remove both settings after the
+first administrator is verified.
+
 1. Open `https://admin.firstmilkventure.com/`.
 2. Select **Accept administrator invitation** on the welcome screen, or **Sign up**.
 3. Enter your name, mobile number, address/assigned area, invited email address,
@@ -168,6 +174,9 @@ pages are identified as unpublished in the customer Profile area.
    campaign and use a test customer to confirm the configured email provider.
 
 ## Verification completed
+
+The free-hosting bootstrap follow-up adds nine isolated setup tests (64 backend
+tests in total), including a fresh backend process reading private host settings.
 
 - `python -m pytest -q`: **55 passed** using isolated state and stubbed mail.
 - All changed JavaScript files passed `node --check`.

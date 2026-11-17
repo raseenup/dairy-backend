@@ -9,6 +9,8 @@ os.environ['DATABASE_URL']=''
 import dotenv
 dotenv.load_dotenv=lambda *args,**kwargs: False
 os.environ.pop('RAZORPAY_WEBHOOK_SECRET',None)
+os.environ.pop('BOOTSTRAP_ADMIN_EMAIL',None)
+os.environ.pop('BOOTSTRAP_ADMIN_INVITATION',None)
 import pytest
 import secure_backend as secure
 
