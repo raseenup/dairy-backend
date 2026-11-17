@@ -1,3 +1,11 @@
+# First Milk Venture v12 portal improvements
+
+See [UPGRADE_V12.md](UPGRADE_V12.md) for readable dark themes, private image/voice
+chat, subscription sections, flexible base-pay schedules, Home ad sizing and OTP
+paste support. Deploy this backend before the coordinated portals.
+
+---
+
 # First Milk Venture v11 driver workspace
 
 See [UPGRADE_V11.md](UPGRADE_V11.md) for customer order sections, subscription

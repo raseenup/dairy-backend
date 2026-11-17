@@ -68,14 +68,17 @@ def add_earning(state,driver_id,kind,amount_paise,reference,source,actor):
 
 
 def record_delivery_earnings(state,order):
-    c=core();ident=order['assigned_driver_id'];rule=state.get('driver_pay_rules',{}).get(ident,{})
+    from payroll import rule_for
+    c=core();ident=order['assigned_driver_id'];rule=rule_for(state,ident,str(order['delivered_time'])[:10])
     for kind,amount in [('base_pay',rule.get('base_pay_paise',0)),('peak_bonus',rule.get('peak_bonus_paise',0))]:
+        if kind=='base_pay' and rule.get('pay_basis','per_delivery')!='per_delivery':continue
         if kind=='peak_bonus' and datetime.fromisoformat(order['delivered_time']).astimezone(c.IST).hour not in rule.get('peak_hours',[]):continue
         if amount:add_earning(state,ident,kind,amount,'Delivery '+order['id'],'delivery:'+order['id']+':'+kind,'system')
 
 
 def wallet(state,driver_id):
     from operations import driver_cash
+    from payroll import schedule_view
     earnings=[e for e in state.get('driver_earnings',{}).values() if e['driver_id']==driver_id]
     requests=[p for p in state.get('driver_payouts',{}).values() if p['driver_id']==driver_id]
     totals={key:sum(e['amount_paise'] for e in earnings if e['category']==key) for key in
@@ -88,7 +91,7 @@ def wallet(state,driver_id):
     return dict(currency='INR',breakdown={k:v/100 for k,v in totals.items()},gross_earnings=gross/100,
         deductions=totals['deduction']/100,cash_balance_deduction=cash_hold/100,paid_out=paid/100,
         net_earnings=net/100,pending_payouts=reserved/100,available_to_claim=max(0,net-reserved)/100,
-        entries=earnings,requests=requests,pay_rule=state.get('driver_pay_rules',{}).get(driver_id,{}))
+        entries=earnings,requests=requests,**schedule_view(state,driver_id))
 
 
 def performance(state,driver_id):
@@ -230,7 +233,11 @@ class Rating(StrictModel):
     comment: str=Field(default='',max_length=1000)
 
 class Message(StrictModel):
-    message: str=Field(min_length=1,max_length=2000)
+    message: str=Field(default='',max_length=2000)
+    attachments: list[str]=Field(default_factory=list,max_length=1)
+
+class ChatRead(StrictModel):
+    sequence: int=Field(strict=True,ge=0)
 
 class DriverDocument(StrictModel):
     kind: Literal['Driving licence','Vehicle registration','Insurance','Pollution certificate','Permit','Other']
@@ -413,7 +420,13 @@ def install_workforce(app):
     def chat_history(order_id:str,request:Request):
         with c.read_transaction() as state:
             user,_=c.actor(state,request);order=chat_access(state,user,order_id)
-            return dict(messages=state.get('order_chats',{}).get(order_id,[]),closed=order['status'] in {'Delivered','Cancelled','Failed'})
+            raw=request.query_params.get('after','0')
+            c.require(raw.isascii() and raw.isdigit() and len(raw)<=8,'Invalid conversation cursor.',422)
+            messages=state.get('order_chats',{}).get(order_id,[])
+            page=[m for m in messages if m['sequence']>int(raw)][:100]
+            last=page[-1]['sequence'] if page else int(raw)
+            return dict(messages=page,last_sequence=last,has_more=last<len(messages),
+                closed=order['status'] in {'Delivered','Cancelled','Failed'})
 
     @app.post('/orders/{order_id}/chat',tags=['Order conversations'])
     def chat_message(order_id:str,request:Request,body:Message):
@@ -425,18 +438,31 @@ def install_workforce(app):
             existing,key,fingerprint=idempotency(state,'chat_send_requests',request,user,body)
             if existing:
                 c.require(existing['order_id']==order_id,'Message key belongs to another order.',409);return {'message':'Message already sent.'}
-            text=c.clean_text(body.message,2000);c.require(text,'Write a message.',422)
+            text=c.clean_text(body.message,2000);c.require(text or body.attachments,'Write a message or attach a photo / voice recording.',422)
+            attachments=[]
+            for ident in body.attachments:
+                record=state.get('chat_attachments',{}).get(ident)
+                c.require(record and record['order_id']==order_id and record['uploader_id']==user['id'], 'Attachment not found.',404)
+                c.require(not record['message_id'],'Attachment has already been sent.',409)
+                attachments.append(record)
             messages=state.setdefault('order_chats',{}).setdefault(order_id,[])
             c.require(len(messages)<1000,'Conversation limit reached. Contact support.',409)
             item=dict(id=c.uid('MSG'),sequence=len(messages)+1,message=text,sender_role=user['portal'],sender_name=user['full_name'],sender_id=user['id'],created_at=c.now())
+            if attachments:
+                from chat_media import metadata
+                item['attachments']=[metadata(a) for a in attachments]
+                for attachment in attachments:attachment['message_id']=item['id']
             messages.append(item);state['chat_send_requests'][key]=dict(request_key=key,fingerprint=fingerprint,order_id=order_id)
             c.audit(state,user['email'],'ORDER_MESSAGE_SENT',order_id);return item
 
     @app.post('/orders/{order_id}/chat/read',tags=['Order conversations'])
-    def read_chat(order_id:str,request:Request):
+    def read_chat(order_id:str,request:Request,body:ChatRead|None=None):
         with c.transaction() as state:
             user,_=c.actor(state,request);chat_access(state,user,order_id)
-            state.setdefault('chat_reads',{})[user['id']+':'+order_id]=len(state.get('order_chats',{}).get(order_id,[]))
+            length=len(state.get('order_chats',{}).get(order_id,[]));sequence=body.sequence if body else length
+            c.require(sequence<=length,'Invalid read position.',422)
+            reads=state.setdefault('chat_reads',{});key=user['id']+':'+order_id
+            reads[key]=max(reads.get(key,0),sequence)
             return {'message':'Conversation marked read.'}
 
     @app.patch('/driver/vehicle',tags=['Vehicle document wallet'])
@@ -492,3 +518,8 @@ def install_workforce(app):
 
     from routing import install_routing
     install_routing(app)
+    from payroll import install_payroll
+    install_payroll(app)
+    from chat_media import install_chat_media
+    install_chat_media(app)
+    app.version='12.0.0'

@@ -272,7 +272,8 @@ def build_email(
     code_block = ""
     if is_otp:
         code_block = (
-            '<p style="margin:12px 0 8px;font:700 36px/48px Courier New,monospace;letter-spacing:0;user-select:all;-webkit-user-select:all;white-space:nowrap;color:' + _NAVY + ';">' + _escape(code) + '</p>'
+            '<p style="margin:12px 0 8px;font:700 36px/48px Courier New,monospace;letter-spacing:0;user-select:all;-webkit-user-select:all;white-space:nowrap;color:' + _NAVY + ';" dir="ltr" aria-label="Verification code">' + _escape(code) + '</p>'
+            '<p style="margin:0 0 12px;font:14px/22px Arial,sans-serif;color:' + _INK + ';">Tap the suggested code above your keyboard, or copy these six digits and choose Paste code on the portal. Suggestions depend on your mail app and device settings.</p>'
             '<p style="margin:0;font:14px/22px Arial,sans-serif;color:' + _MUTED + ';">Expires in <strong>5 minutes</strong>. Use this code once. Never share it with anyone.</p>'
         )
     message_block = (
@@ -323,11 +324,12 @@ def build_email(
                 + '<h2 style="font:700 20px/28px Arial;color:#112F38;">'+_escape(ad_title)+'</h2>'
                 + '<p style="font:14px/22px Arial;color:#536C68;">'+_paragraph(ad_description)+'</p>'
                 + '<a href="'+_escape(ad_url)+'" style="font:700 14px Arial;color:#08784E;">Discover First Milk →</a></td></tr></table>')
+    preheader = (code + ' is your First Milk ' + content.get('purpose','verification').lower() + ' code. Expires in 5 minutes.') if is_otp else content['preheader']
     html_body = f'''<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>{_escape(content["subject"])}</title>
 <style>@media only screen and (max-width:620px){{.email-shell{{width:100%!important;max-width:100%!important}}.outer-pad{{padding:12px 8px!important}}.content-pad{{padding:26px 22px!important}}.email-title{{font-size:29px!important;line-height:36px!important}}}}</style></head>
 <body bgcolor="{_CREAM}" style="margin:0;padding:0;background-color:{_CREAM};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
-<div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:{_CREAM};mso-hide:all;">{_escape(content["preheader"])}</div>
+<div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:{_CREAM};mso-hide:all;">{_escape(preheader)}</div>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="{_CREAM}" style="width:100%;background-color:{_CREAM};border-collapse:collapse;"><tr><td class="outer-pad" align="center" style="padding:32px 12px;">
 <table class="email-shell" role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px;max-width:100%;border-collapse:collapse;">
 <tr><td bgcolor="{_NAVY}" style="padding:24px 30px;background-color:{_NAVY};border-radius:16px 16px 0 0;border-bottom:4px solid {_GOLD};">
@@ -348,7 +350,8 @@ def build_email(
     if is_otp:
         plain = [code + " is your First Milk verification code.", ""] + plain
         plain += ["", content["panel_title"] + ": " + code,
-                  "Expires in 5 minutes. Use this code once. Never share it with anyone."]
+                  "Expires in 5 minutes. Use this code once. Never share it with anyone.",
+                  "Use the keyboard code suggestion, or copy the six digits and choose Paste code in the portal. Suggestions depend on your mail app and device settings."]
     if rows:
         plain += [""] + [f"{label}: {value}" for label, value in rows]
     if kind == "welcome" and not rows:

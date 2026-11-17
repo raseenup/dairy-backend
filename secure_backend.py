@@ -1059,7 +1059,7 @@ def install(app, legacy):
                 response=await call_next(request)
             except HTTPException as e:response=JSONResponse({'detail':e.detail},status_code=e.status_code)
         response.headers.update({'X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin','X-Frame-Options':'DENY',
-            'Permissions-Policy':'camera=(self), geolocation=(self), microphone=()',
+            'Permissions-Policy':'camera=(self), geolocation=(self), microphone=(self)',
             'Content-Security-Policy':"default-src 'self'; script-src 'self' https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: https:; connect-src 'self' "+' '.join(origins)+" https://api.razorpay.com https://cdn.tailwindcss.com; frame-src https://api.razorpay.com https://checkout.razorpay.com; media-src 'self' blob: https://backend.firstmilkventure.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"})
         if not request.url.path.startswith(('/customer/','/driver-portal/','/admin-portal/','/media/')):response.headers['Cache-Control']='no-store'
         if PRODUCTION:response.headers['Strict-Transport-Security']='max-age=31536000; includeSubDomains'
@@ -1256,3 +1256,15 @@ def install(app, legacy):
 
     from workforce import install_workforce
     install_workforce(app)
+    from starlette.middleware.gzip import GZipMiddleware
+    class APICompression:
+        def __init__(self, app):
+            self.app=app
+            self.compressed=GZipMiddleware(app,minimum_size=1000,compresslevel=5)
+        async def __call__(self, scope, receive, send):
+            # JPEG/audio/video are already compressed. Do not spend CPU or add
+            # buffering latency on private chat playback or public ad assets.
+            path=scope.get('path','')
+            binary=path.startswith(('/media/','/order-chat-media/','/driver-documents/')) or path.endswith('/proof')
+            await (self.app if binary else self.compressed)(scope,receive,send)
+    app.add_middleware(APICompression)
