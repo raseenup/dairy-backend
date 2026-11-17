@@ -138,6 +138,20 @@ _COPY = {
 }
 
 
+# v9 purpose-specific variants preserve every original renderer variant above.
+for _kind, _subject, _purpose, _title, _intro, _base in (
+    ('signup_verification','First Milk — sign-up verification code','Sign up','Verify your new account.','Use this code to finish creating your First Milk account.','verification'),
+    ('signin_verification','First Milk — sign-in verification code','Sign in','Confirm your sign-in.','Use this code to complete your First Milk sign-in.','verification'),
+    ('admin_invitation','First Milk — administrator invitation','Administrator invitation','Your workspace invitation.','You have been invited to join the First Milk administration workspace.','welcome'),
+    ('order_placed','First Milk — order placed','Order placed','Your order is placed.','We have recorded your order. Review the delivery and payment details below.','order_confirmation'),
+    ('order_shipped','First Milk — your order has shipped','Order shipped','Your order is on its way.','Your order has been dispatched. Follow its progress in My Orders.','order_confirmation'),
+    ('order_out_for_delivery','First Milk — out for delivery','Out for delivery','Next stop: your doorstep.','Your order is out for delivery. Keep your delivery PIN ready.','order_confirmation'),
+    ('order_delivered','First Milk — order delivered','Order delivered','Delivered. Thank you!','Your driver has confirmed delivery using your delivery PIN and proof of delivery.','delivery_confirmation'),
+):
+    _COPY[_kind] = dict(_COPY[_base],subject=_subject,purpose=_purpose,eyebrow=_purpose.upper(),title=_title,intro=_intro,preheader=_intro)
+KINDS = tuple(_COPY)
+
+
 def _value(value: object) -> str:
     return "" if value is None else str(value)
 
@@ -201,6 +215,7 @@ def build_email(
     offer_description: str = "",
     offer_terms: str = "",
     unsubscribe_url: str | None = None,
+    company_ad: dict | None = None,
 ) -> dict[str, str]:
     """Return subject/html/text for one of KINDS, without sending anything.
 
@@ -220,10 +235,11 @@ def build_email(
     if kind not in _COPY:
         raise ValueError("Unknown email kind. Choose one of: " + ", ".join(KINDS))
     content = _COPY[kind]
-    is_otp = kind in ("verification", "password_reset")
+    is_otp = kind in ("verification", "password_reset", "signup_verification", "signin_verification")
     if is_otp and (not isinstance(code, str) or re.fullmatch(r"[0-9]{6}", code) is None):
         raise ValueError("code must contain exactly six ASCII digits")
     rows = _details(details)
+    rows.insert(0, ("Purpose", content.get("purpose", content["eyebrow"].title())))
     if kind == "offer":
         if not all(isinstance(value, str) and value.strip() for value in (offer_title, offer_description, offer_terms)):
             raise ValueError("offer requires a title, description and terms")
@@ -281,7 +297,7 @@ def build_email(
         "If you did not request this code, you can ignore this email. Your password will not change unless you complete the reset."
         if kind == "password_reset" else
         "If you did not request this code, you can ignore this email."
-        if kind == "verification" else
+        if is_otp else
         "If you do not recognize this activity, open First Milk directly and contact support."
         if kind == "security_notice" else
         "Need help? Open your First Milk portal to contact support."
@@ -290,6 +306,17 @@ def build_email(
         '<p style="margin:12px 0 0;font:12px/20px Arial,sans-serif;color:#D5E6DF;"><a href="' + _escape(unsubscribe) + '" style="color:#FFFFFF;text-decoration:underline;">Unsubscribe from promotional emails</a></p>'
         if unsubscribe else ""
     )
+    ad = company_ad or {}
+    ad_title = _value(ad.get('title') or 'Fresh essentials. Every day with FMV.')
+    ad_description = _value(ad.get('description') or 'Explore First Milk Venture for milk, ghee, curd and butter. Shop your favourites or plan a fresh daily routine.')
+    ad_url = _url(ad.get('action_url') or 'https://www.firstmilkventure.com/', 'company ad link')
+    ad_image = _url(ad['image_url'], 'company ad image') if ad.get('image_url') else ''
+    ad_block = ('<table role="presentation" width="100%" style="margin-top:26px;background:#E8F4EC;border-radius:12px"><tr><td style="padding:20px;">'
+                + '<p style="font:700 11px Arial;color:#08784E;letter-spacing:1px;">FROM FIRST MILK VENTURE</p>'
+                + ('<img src="'+_escape(ad_image)+'" alt="'+_escape(ad_title)+'" width="480" style="width:100%;max-width:480px;height:auto;border-radius:8px;">' if ad_image else '')
+                + '<h2 style="font:700 20px/28px Arial;color:#112F38;">'+_escape(ad_title)+'</h2>'
+                + '<p style="font:14px/22px Arial;color:#536C68;">'+_paragraph(ad_description)+'</p>'
+                + '<a href="'+_escape(ad_url)+'" style="font:700 14px Arial;color:#08784E;">Discover First Milk →</a></td></tr></table>')
     html_body = f'''<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>{_escape(content["subject"])}</title>
 <style>@media only screen and (max-width:620px){{.email-shell{{width:100%!important;max-width:100%!important}}.outer-pad{{padding:12px 8px!important}}.content-pad{{padding:26px 22px!important}}.email-title{{font-size:29px!important;line-height:36px!important}}}}</style></head>
@@ -304,7 +331,7 @@ def build_email(
 <h1 class="email-title" style="margin:0 0 22px;font:700 34px/41px Georgia,serif;color:{_NAVY};">{_escape(title)}</h1>
 <p style="margin:0 0 10px;font:600 16px/25px Arial,sans-serif;color:{_INK};">{_escape(greeting)}</p>
 <p style="margin:0;font:16px/26px Arial,sans-serif;color:{_MUTED};">{_paragraph(intro)}</p>
-{panel}{message_block}{button}
+{panel}{message_block}{button}{ad_block}
 <p style="margin:26px 0 0;padding-top:20px;border-top:1px solid #E1EAE3;font:13px/21px Arial,sans-serif;color:{_MUTED};">{_escape(safety_note)}</p>
 </td></tr>
 <tr><td bgcolor="{_NAVY}" style="padding:23px 30px;background-color:{_NAVY};border-radius:0 0 16px 16px;">
@@ -326,6 +353,7 @@ def build_email(
     if action:
         plain += ["", (content["cta"] or "Open First Milk") + ": " + action]
     plain += ["", safety_note, "", "First Milk Venture"]
+    plain += ["", "FROM FIRST MILK VENTURE", ad_title, ad_description, "Discover First Milk: " + ad_url]
     if unsubscribe:
         plain += ["Unsubscribe from promotional emails: " + unsubscribe]
     return {"subject": content["subject"], "html": html_body, "text": "\n".join(plain)}

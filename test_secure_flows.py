@@ -340,7 +340,7 @@ def test_challenge_deadlines_resend_boundary_and_retry_headers(monkeypatch):
     clock = [time.time()]
     monkeypatch.setattr(sec.time, 'time', lambda: clock[0])
     sent = []
-    monkeypatch.setattr(sec, 'send_code', lambda email, code: sent.append(email))
+    monkeypatch.setattr(sec, 'send_code', lambda email, code, *args, **kwargs: sent.append(email))
     response = signup()
     assert response.status_code == 200
     challenge = response.json()
@@ -433,7 +433,7 @@ print('persisted-session-valid')
 @pytest.mark.parametrize('portal', ['customer', 'admin', 'driver'])
 def test_existing_signup_email_or_mobile_is_rejected_before_mail(portal, monkeypatch):
     sent = []
-    monkeypatch.setattr(sec, 'send_code', lambda email, code: sent.append(email))
+    monkeypatch.setattr(sec, 'send_code', lambda email, code, *args, **kwargs: sent.append(email))
     account(portal=portal)
     with sec.transaction() as state:
         users_before = dict(state['users'])
@@ -459,7 +459,7 @@ def test_existing_signup_email_or_mobile_is_rejected_before_mail(portal, monkeyp
 @pytest.mark.parametrize('portal', ['customer', 'admin', 'driver'])
 def test_competing_pending_signups_cannot_claim_same_mobile(portal, monkeypatch):
     sent = []
-    monkeypatch.setattr(sec, 'send_code', lambda email, code: sent.append(email))
+    monkeypatch.setattr(sec, 'send_code', lambda email, code, *args, **kwargs: sent.append(email))
     pending = []
     invitations = {}
     for email in ['first@example.com', 'second@example.com']:

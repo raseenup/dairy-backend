@@ -16,5 +16,5 @@ import secure_backend as secure
 def isolated_state(monkeypatch):
     with secure.transaction() as state:
         state.clear();state.update(secure.initial_state())
-    monkeypatch.setattr(secure,'send_code',lambda email,code:None)
+    monkeypatch.setattr(secure,'send_code',lambda email,code,*args,**kwargs:None)
     monkeypatch.setattr(secure,'rate_limit',lambda *a,**kw:None)
