@@ -428,3 +428,86 @@ print('persisted-session-valid')
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == 'persisted-session-valid'
+
+
+@pytest.mark.parametrize('portal', ['customer', 'admin', 'driver'])
+def test_existing_signup_email_or_mobile_is_rejected_before_mail(portal, monkeypatch):
+    sent = []
+    monkeypatch.setattr(sec, 'send_code', lambda email, code: sent.append(email))
+    account(portal=portal)
+    with sec.transaction() as state:
+        users_before = dict(state['users'])
+        drivers_before = dict(state['drivers'])
+        sessions_before = dict(state['sessions'])
+    mail_count = len(sent)
+    # Email comparison is case-insensitive; formatted mobile normalizes to the
+    # same account even when the new request uses a different email address.
+    same_email = signup('BUYER@EXAMPLE.COM', portal, '9876543211')
+    same_mobile = signup('other@example.com', portal, '+91 98765 43210')
+    for response in [same_email, same_mobile]:
+        assert response.status_code == 409
+        assert response.json() == {'detail': 'An account with this email or mobile number already exists in this portal. Sign in or reset your password.'}
+        assert 'access_token' not in response.json()
+        assert 'challenge_id' not in response.json()
+    assert len(sent) == mail_count
+    with sec.transaction() as state:
+        assert state['users'] == users_before
+        assert state['drivers'] == drivers_before
+        assert state['sessions'] == sessions_before
+
+
+@pytest.mark.parametrize('portal', ['customer', 'admin', 'driver'])
+def test_competing_pending_signups_cannot_claim_same_mobile(portal, monkeypatch):
+    sent = []
+    monkeypatch.setattr(sec, 'send_code', lambda email, code: sent.append(email))
+    pending = []
+    invitations = {}
+    for email in ['first@example.com', 'second@example.com']:
+        invitation = ''
+        if portal == 'admin':
+            invitation = 'pending-admin-invitation-' + email
+            digest = hashlib.sha256(invitation.encode()).hexdigest()
+            invitations[email] = digest
+            with sec.transaction() as state:
+                state['invites'][digest] = {'email': email, 'role': 'super_admin',
+                                           'expires': time.time() + 300, 'used': False}
+        response = signup(email, portal, '9876543210', invitation)
+        assert response.status_code == 200
+        challenge_id = response.json()['challenge_id']
+        otp_for(challenge_id)
+        pending.append((email, challenge_id))
+    # Neither account existed when both valid challenges were issued. Final
+    # verification must atomically recheck mobile ownership, not just email.
+    def claim(item):
+        return client.post('/auth/verify-otp', json={'challenge_id': item[1], 'otp': '123456'})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(claim, pending))
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    winner = next(item for item, response in zip(pending, responses) if response.status_code == 200)
+    loser = next(item for item, response in zip(pending, responses) if response.status_code == 409)
+    conflict = next(response for response in responses if response.status_code == 409)
+    assert conflict.json() == {'detail': 'An account with this email or mobile number already exists in this portal. Sign in or reset your password.'}
+    assert len(sent) == 2
+    with sec.transaction() as state:
+        assert len(state['users']) == 1
+        saved_user = dict(state['users'][portal + ':' + winner[0]])
+        assert saved_user['phone'] == '+919876543210'
+        assert portal + ':' + loser[0] not in state['users']
+        assert loser[1] in state['challenges']
+        if portal == 'admin':
+            assert state['invites'][invitations[winner[0]]]['used'] is True
+            assert state['invites'][invitations[loser[0]]]['used'] is False
+        if portal == 'driver':
+            assert len(state['drivers']) == 1
+            assert not saved_user['approved']
+            assert state['sessions'] == {}
+    # An invalid code must still get the ordinary code error, without revealing
+    # a competing account or consuming an administrator invitation.
+    invalid = client.post('/auth/verify-otp', json={'challenge_id': loser[1], 'otp': '654321'})
+    assert invalid.status_code == 400
+    assert invalid.json() == {'detail': 'Invalid verification code.'}
+    assert len(sent) == 2
+    with sec.transaction() as state:
+        assert state['users'][portal + ':' + winner[0]] == saved_user
+        assert len(state['users']) == 1
+        assert state['challenges'][loser[1]]['attempts'] == 1
