@@ -44,12 +44,13 @@ if PRODUCTION and not DATABASE_URL and os.getenv('ALLOW_PRODUCTION_SQLITE') != '
     raise RuntimeError('Production requires DATABASE_URL (PostgreSQL), or explicit ALLOW_PRODUCTION_SQLITE=true with a persistent disk.')
 SESSION_SECONDS = 1800
 ACCOUNT_EXISTS_MESSAGE = 'An account with this email or mobile number already exists in this portal. Sign in or reset your password.'
-ROLES = {'super_admin', 'operations_manager', 'finance', 'customer_support'}
+ROLES = {'super_admin', 'operations_manager', 'finance', 'customer_support', 'content_manager'}
 PERMISSIONS = {
     'super_admin': {'*'},
     'operations_manager': {'catalog','orders','drivers','logistics'},
     'finance': {'finance'},
     'customer_support': {'support'},
+    'content_manager': {'content'},
 }
 
 def now(): return datetime.now(IST).isoformat()
@@ -97,7 +98,7 @@ def clean_text(value, limit=3000):
     return value
 
 def public_user(u):
-    return {k: u.get(k, '') for k in ('id','email','phone','full_name','address','portal','role','approved')}
+    return {k: u.get(k, '') for k in ('id','email','phone','full_name','address','portal','role','approved','content_editor')}
 
 def initial_state():
     # Catalog retained from the supplied project; no fabricated users, orders or payments.
@@ -186,10 +187,11 @@ def audit(s, actor, event, object_id=''):
     s['audit'] = s['audit'][-5000:]
 
 
-def send_code(email, code):
+def send_code(email, code, purpose='signin', portal='customer', name='', promotion=None):
     api_key = os.getenv('RESEND_API_KEY', '')
     require(bool(api_key), 'Email delivery is not configured. The administrator must set RESEND_API_KEY.', 503)
-    content = build_email('verification', code=code)
+    kind = {'signup':'signup_verification','signin':'signin_verification','reset':'password_reset'}.get(purpose,'verification')
+    content = build_email(kind, code=code, name=name, details=[('Portal', portal.title())], company_ad=promotion)
     try:
         r = httpx.post(
             'https://api.resend.com/emails',
@@ -245,6 +247,7 @@ class Checkout(BaseModel):
     customer_phone: str = ''
     customer_name: str = ''
     delivery_address: str = Field(default='',max_length=1000)
+    address_id: str = Field(default='',max_length=100)
     total_amount: float = 0  # Compatibility only; ignored.
     currency: Literal['INR'] = 'INR'
     payment_method: Literal['COD','Online','UPI / Online (INR)'] = 'COD'
@@ -271,7 +274,8 @@ def issue_challenge(s, u, purpose, pending=None, invitation=''):
     for k in [k for k,v in s['challenges'].items() if v['expires'] < time.time() or (v['email']==email and v['portal']==u['portal'])]:
         del s['challenges'][k]
     cid, code = uid('CH'), f'{secrets.randbelow(1000000):06d}'
-    send_code(email,code)
+    from experience import company_ad
+    send_code(email,code,purpose,u['portal'],u.get('full_name',''),company_ad(s))
     sent_at = time.time()
     s['challenges'][cid] = dict(email=email,portal=u['portal'],purpose=purpose,pending=pending,
         invitation=invitation, code_hash=hmac.new(SECRET.encode(),(cid+code).encode(),'sha256').hexdigest(),
@@ -331,7 +335,8 @@ def make_order(s,u,body,key):
     if ik in s['idempotency']:
         item=s['idempotency'][ik];require(item['digest']==digest,'This checkout key was already used with different items.',409)
         return s['orders'][item['order_id']]
-    addr=clean_text(body.delivery_address or u['address'],1000)
+    from experience import resolve_checkout_address
+    addr=resolve_checkout_address(s,u,body)
     require(bool(addr),'A delivery address is required.')
     delivery_day=body.delivery_date or today()
     try: require(date.fromisoformat(delivery_day)>=date.fromisoformat(today()),'Choose today or a future delivery date.')
@@ -351,9 +356,10 @@ def make_order(s,u,body,key):
     online=body.payment_method!='COD'
     if online:
         require(os.getenv('RAZORPAY_KEY_ID') and os.getenv('RAZORPAY_KEY_SECRET'),'Online payments are not configured. Choose cash on delivery.',503)
+    chosen=s.get('addresses',{}).get(body.address_id,{})
     oid=uid('FMV'); otp=f'{secrets.randbelow(9000)+1000}'
-    o=dict(id=oid,order_number=oid,owner=u['email'],user_email=u['email'],customer_name=u['full_name'],
-        customer_phone=u['phone'],delivery_address=addr,items=lines,items_summary=', '.join(f"{l['quantity']}x {l['name']}" for l in lines),
+    o=dict(id=oid,order_number=oid,owner=u['email'],user_email=u['email'],customer_name=chosen.get('recipient') or u['full_name'],
+        customer_phone=chosen.get('phone') or u['phone'],address_id=body.address_id,delivery_address=addr,items=lines,items_summary=', '.join(f"{l['quantity']}x {l['name']}" for l in lines),
         quantity=sum(quantities.values()),subtotal_paise=subtotal,tax_paise=tax,total_paise=subtotal+tax,total_amount=(subtotal+tax)/100,
         currency='INR',payment_method='Online' if online else 'COD',payment_status='pending' if online else 'cod_due',
         cod_amount=0 if online else (subtotal+tax)/100,cod_collected=0,status='Awaiting Payment' if online else 'Unassigned',
@@ -366,6 +372,8 @@ def make_order(s,u,body,key):
         status='unpaid',type='Sales Invoice',currency='INR',tax_paise=tax,gstin=s['tax'].get('gstin',''))
     s['invoices'][invoice['id']]=invoice
     notify(s,u['email'],'Order placed',f'Order {oid}. Delivery PIN: {otp}. Share the PIN only at delivery.')
+    from experience import queue_order_email
+    queue_order_email(s,o,'placed')
     audit(s,u['email'],'ORDER_PLACED',oid)
     return o
 
@@ -429,7 +437,7 @@ def sanitize_photo(data):
 def dispatch(s, request, body=None):
     path=request.scope['route'].path;method=request.method;params=request.path_params
     data=body.model_dump(exclude_unset=True) if isinstance(body,BaseModel) else (body or {})
-    if path=='/': return {'status':'online','service':'First Milk Venture Enterprise API','version':'8.0.0','country':'India','state':'Kerala','currency':'INR'}
+    if path=='/': return {'status':'online','service':'First Milk Venture Enterprise API','version':'9.0.0','country':'India','state':'Kerala','currency':'INR'}
     if path=='/config': return {'country':'India','state':'Kerala','currency':'INR','timezone':'Asia/Kolkata','online_payments':bool(os.getenv('RAZORPAY_KEY_ID') and os.getenv('RAZORPAY_KEY_SECRET'))}
     if path=='/auth/signup':
         valid_password(body.password);email=str(body.email).lower();key=body.portal+':'+email
@@ -669,6 +677,8 @@ def admin_dispatch(s,u,r,d):
         email=str(TypeAdapter(EmailStr).validate_python(d.get('email',''))).lower();role=d.get('role')
         require(role in ROLES,'Invalid role.')
         token=secrets.token_urlsafe(32);s['invites'][hashlib.sha256(token.encode()).hexdigest()]={'email':email,'role':role,'expires':time.time()+86400,'used':False}
+        from experience import queue_invitation_email
+        queue_invitation_email(s,email,token,role)
         audit(s,u['email'],'STAFF_INVITED',email);return {'invitation':token,'message':'Invitation created. Share this code privately with the named staff member.'}
     if p in {'/admin/key','/admin/rbac/roles/{target_role}/key'}:raise HTTPException(410,'Shared role keys were replaced by individual accounts. Use password reset and staff invitations.')
     raise HTTPException(404,'Unknown administration action.')
@@ -735,6 +745,11 @@ def driver_dispatch(s,u,r,d):
             require(status in transitions.get(o['status'],set()),'Invalid delivery status transition.',409)
             o.update(status=status,notes=clean_text(d.get('notes','')),failure_reason=clean_text(d.get('failure_reason','')))
         notify(s,o['owner'],'Delivery updated',f"{o['id']}: {o['status']}")
+        from experience import queue_order_email
+        event={'Picked Up':'shipped','In Transit':'out_for_delivery','Arrived':'out_for_delivery','Delivered':'delivered'}.get(status)
+        if event:
+            if event=='out_for_delivery':queue_order_email(s,o,'shipped')
+            queue_order_email(s,o,event)
         audit(s,u['email'],'DELIVERY_'+status.upper(),o['id']);return {'message':'Delivery updated.','order':order_view(o,True)}
     if p=='/driver/expenses':
         require(active and active['status']!='completed','An active shift is required.',409)
@@ -935,7 +950,7 @@ def install(app, legacy):
             except HTTPException as e:response=JSONResponse({'detail':e.detail},status_code=e.status_code)
         response.headers.update({'X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin','X-Frame-Options':'DENY',
             'Permissions-Policy':'camera=(self), geolocation=(self), microphone=()',
-            'Content-Security-Policy':"default-src 'self'; script-src 'self' https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: https:; connect-src 'self' "+' '.join(origins)+" https://api.razorpay.com https://cdn.tailwindcss.com; frame-src https://api.razorpay.com https://checkout.razorpay.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"})
+            'Content-Security-Policy':"default-src 'self'; script-src 'self' https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: https:; connect-src 'self' "+' '.join(origins)+" https://api.razorpay.com https://cdn.tailwindcss.com; frame-src https://api.razorpay.com https://checkout.razorpay.com; media-src 'self' blob: https://backend.firstmilkventure.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"})
         if not request.url.path.startswith(('/customer/','/driver-portal/','/admin-portal/')):response.headers['Cache-Control']='no-store'
         if PRODUCTION:response.headers['Strict-Transport-Security']='max-age=31536000; includeSubDomains'
         return response
@@ -1118,3 +1133,5 @@ def install(app, legacy):
         s['sessions']={k:v for k,v in s['sessions'].items() if v['expires']>time.time()}
     try:os.chmod(DB_PATH,0o600)
     except OSError:pass
+    from experience import install_experience
+    install_experience(app)

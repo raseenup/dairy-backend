@@ -1,3 +1,12 @@
+# First Milk Venture v9 update
+
+See [UPGRADE_V9.md](UPGRADE_V9.md) for administrator invitations, customer status
+emails, saved addresses, dedicated Profile navigation and the Ads & offers editor.
+Deploy the backend before the portal changes. Run `python -m pytest -q` for the
+55 isolated backend tests.
+
+---
+
 # First Milk Venture v8 — active backend
 
 Read [SETUP.md](SETUP.md) before deployment. This is the current runbook; the original README is preserved below as historical package context.
