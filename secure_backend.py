@@ -1131,6 +1131,8 @@ def install(app, legacy):
     with transaction() as s:
         for key,value in initial_state().items():s.setdefault(key,value)
         s['sessions']={k:v for k,v in s['sessions'].items() if v['expires']>time.time()}
+        from bootstrap_admin import configure_first_admin_invitation
+        configure_first_admin_invitation(s)
     try:os.chmod(DB_PATH,0o600)
     except OSError:pass
     from experience import install_experience

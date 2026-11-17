@@ -1,9 +1,13 @@
 # First Milk Venture v9 update
 
+For the first Super Admin on **Render Free**, follow
+[FREE_RENDER_ADMIN.md](FREE_RENDER_ADMIN.md). Private environment settings create
+an invitation at startup; no paid Shell or public setup endpoint is needed.
+
 See [UPGRADE_V9.md](UPGRADE_V9.md) for administrator invitations, customer status
 emails, saved addresses, dedicated Profile navigation and the Ads & offers editor.
 Deploy the backend before the portal changes. Run `python -m pytest -q` for the
-55 isolated backend tests.
+64 isolated backend tests.
 
 ---
 
