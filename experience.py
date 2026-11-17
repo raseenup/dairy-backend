@@ -193,7 +193,7 @@ class Campaign(BaseModel):
     title: str = Field(min_length=1,max_length=120)
     description: str = Field(default='',max_length=1500)
     kind: Literal['banner','offer','menu','post'] = 'banner'
-    placement: Literal['home','offers','email'] = 'home'
+    placement: Literal['home','home_location','offers','email'] = 'home'
     status: Literal['draft','published'] = 'published'
     media_id: str = Field(default='',max_length=100)
     alt_text: str = Field(default='',max_length=200)
@@ -204,6 +204,9 @@ class Campaign(BaseModel):
     starts_at: str = Field(default='',max_length=40)
     ends_at: str = Field(default='',max_length=40)
     sort_order: int = Field(default=0,ge=0,le=10000)
+    display_width: int = Field(default=1200,strict=True,ge=240,le=1600)
+    display_height: int = Field(default=300,strict=True,ge=80,le=1000)
+    media_fit: Literal['contain','cover'] = 'contain'
     version: int | None = Field(default=None,ge=1)
 
 
@@ -272,6 +275,25 @@ def public_campaign(state, item):
 
 def install_experience(app):
     c = core()
+    from operations import media_connection
+    media_table=('fmv_secure.' if c.DATABASE_URL else '')+'campaign_files'
+    with media_connection() as conn:
+        conn.execute('CREATE TABLE IF NOT EXISTS '+media_table+' (id TEXT PRIMARY KEY, content '+
+            ('BYTEA' if c.DATABASE_URL else 'BLOB')+' NOT NULL, mime_type TEXT NOT NULL)')
+    # Move legacy ad bytes out of the shared JSON row, preserving asset IDs/URLs.
+    with c.read_transaction(maintain=False) as state:
+        legacy=[dict(item) for item in state.get('campaign_media',{}).values() if item.get('data_base64')]
+    for item in legacy:
+        raw=base64.b64decode(item['data_base64'])
+        with media_connection() as conn:
+            conn.execute('INSERT INTO '+media_table+' (id,content,mime_type) VALUES '+
+                ('(%s,%s,%s)' if c.DATABASE_URL else '(?,?,?)')+' ON CONFLICT (id) DO NOTHING',
+                (item['id'],raw,item['mime_type']))
+    if legacy:
+        with c.transaction() as state:
+            for item in legacy:
+                current=state.get('campaign_media',{}).get(item['id'])
+                if current and current.get('data_base64')==item['data_base64']:current.pop('data_base64')
     app.version = '9.0.0'
 
     @app.get('/users/me/addresses',tags=['Saved addresses'])
@@ -402,36 +424,46 @@ def install_experience(app):
 
     @app.post('/admin/content-media',tags=['Campaign management'])
     def upload_campaign_media(request:Request,body:CampaignMedia):
-        with c.transaction() as state:
+        with c.read_transaction(maintain=False) as state:
             user=content_actor(state,request)
-            try:raw=base64.b64decode(body.data_base64,validate=True)
-            except (ValueError,TypeError):raise HTTPException(422,'Invalid upload.')
-            c.require(0<len(raw)<=1500000,'Upload a file up to 1.5 MB.',422)
-            if len(raw)>12 and raw[4:8]==b'ftyp' and raw[8:12] in {b'isom',b'iso2',b'mp41',b'mp42',b'avc1',b'M4V '}:
-                mime='video/mp4'
-            else:
-                try:
-                    image=Image.open(io.BytesIO(raw))
-                    c.require(image.format in {'JPEG','PNG','GIF','WEBP'} and max(image.size)<=4096
-                              and image.width*image.height<=12000000 and getattr(image,'n_frames',1)<=300,
-                              'Use PNG, JPEG, GIF or WebP, up to 4096 pixels and 300 frames.',422)
-                    mime=Image.MIME[image.format]
-                    image.verify()
-                except HTTPException:raise
-                except Exception:raise HTTPException(422,'Invalid image. Use PNG, JPEG, GIF, WebP or MP4.')
-            ident=c.uid('MEDIA')
-            state.setdefault('campaign_media',{})[ident]=dict(id=ident,mime_type=mime,
-                data_base64=base64.b64encode(raw).decode(),created_at=c.now())
-            c.audit(state,user['email'],'CAMPAIGN_MEDIA_UPLOADED',ident)
-            return {'id':ident,'mime_type':mime,'url':'/media/campaign/'+ident}
+        c.rate_limit('campaign-media:'+user['id'],10,60)
+        try:raw=base64.b64decode(body.data_base64,validate=True)
+        except (ValueError,TypeError):raise HTTPException(422,'Invalid upload.')
+        c.require(0<len(raw)<=1500000,'Upload a file up to 1.5 MB.',422)
+        if len(raw)>12 and raw[4:8]==b'ftyp' and raw[8:12] in {b'isom',b'iso2',b'mp41',b'mp42',b'avc1',b'M4V '}:
+            mime='video/mp4'
+        else:
+            try:
+                image=Image.open(io.BytesIO(raw))
+                c.require(image.format in {'JPEG','PNG','GIF','WEBP'} and max(image.size)<=4096
+                          and image.width*image.height<=12000000 and getattr(image,'n_frames',1)<=300,
+                          'Use PNG, JPEG, GIF or WebP, up to 4096 pixels and 300 frames.',422)
+                mime=Image.MIME[image.format]
+                image.verify()
+            except HTTPException:raise
+            except Exception:raise HTTPException(422,'Invalid image. Use PNG, JPEG, GIF, WebP or MP4.')
+        ident=c.uid('MEDIA')
+        with media_connection() as conn:
+            conn.execute('INSERT INTO '+media_table+' VALUES '+('(%s,%s,%s)' if c.DATABASE_URL else '(?,?,?)'),(ident,raw,mime))
+        try:
+            with c.transaction() as state:
+                user=content_actor(state,request)
+                state.setdefault('campaign_media',{})[ident]=dict(id=ident,mime_type=mime,
+                    size=len(raw),created_at=c.now())
+                c.audit(state,user['email'],'CAMPAIGN_MEDIA_UPLOADED',ident)
+                return {'id':ident,'mime_type':mime,'url':'/media/campaign/'+ident}
+        except BaseException:
+            with media_connection() as conn:
+                conn.execute('DELETE FROM '+media_table+' WHERE id='+('%s' if c.DATABASE_URL else '?'),(ident,))
+            raise
 
     @app.get('/media/campaign/{media_id}',tags=['Public advertising assets'])
     def campaign_asset(media_id:str):
-        with c.read_transaction() as state:
-            item=state.get('campaign_media',{}).get(media_id)
-            c.require(item,'Asset not found.',404)
-            return Response(base64.b64decode(item['data_base64']),media_type=item['mime_type'],
-                            headers={'Cache-Control':'public, max-age=3600','X-Content-Type-Options':'nosniff'})
+        with media_connection() as conn:
+            row=conn.execute('SELECT content,mime_type FROM '+media_table+' WHERE id='+('%s' if c.DATABASE_URL else '?'),(media_id,)).fetchone()
+        c.require(row,'Asset not found.',404)
+        return Response(bytes(row[0]),media_type=row[1],
+            headers={'Cache-Control':'public, max-age=86400, immutable','X-Content-Type-Options':'nosniff'})
 
     # Replace the legacy prompt-oriented route while retaining its original schema.
     app.router.routes[:]=[r for r in app.routes if not (getattr(r,'path','')=='/admin/invitations' and 'POST' in getattr(r,'methods',set()))]
