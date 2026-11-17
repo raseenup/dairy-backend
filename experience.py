@@ -21,6 +21,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, EmailStr
 from PIL import Image
+from mail_routing import sender_for
 
 
 def core():
@@ -78,7 +79,7 @@ def queue_invitation_email(state, email, token, role):
 
 def queue_order_email(state, order, event):
     labels = {'placed':'Order placed', 'shipped':'Shipped',
-              'out_for_delivery':'Out for delivery', 'delivered':'Delivered'}
+              'out_for_delivery':'Out for delivery', 'delivered':'Delivered', 'cancelled':'Cancelled'}
     details = [('Order', order['order_number']), ('Status', labels[event]),
                ('Items', order['items_summary']),
                ('Total', 'INR %.2f' % order['total_amount']),
@@ -86,6 +87,8 @@ def queue_order_email(state, order, event):
                ('Delivery date', order['delivery_date']),
                ('Delivery address', order['delivery_address'])]
     message = 'Track your order from Profile → My Orders in your First Milk account.'
+    if event == 'cancelled':
+        message = 'Your order has been cancelled. Reserved stock has been released. Contact support if you need assistance.'
     if event == 'out_for_delivery':
         details.append(('Delivery PIN', order['delivery_otp']))
         message += ' Share your delivery PIN only when you receive the order.'
@@ -102,8 +105,7 @@ def send_rendered_mail(item):
     try:
         response = httpx.post('https://api.resend.com/emails',
             headers={'Authorization':'Bearer ' + api_key, 'Idempotency-Key':item['id']},
-            json={'from':os.getenv('ORDER_EMAIL_SENDER', os.getenv('AUTH_EMAIL_SENDER',
-                       'First Milk Venture <auth@firstmilkventure.com>')),
+            json={'from':sender_for(item['kind']),
                   'to':[item['to']], **content}, timeout=15)
         c.require(response.is_success, 'Mail provider rejected the message (%s).' % response.status_code, 503)
         return str(response.json().get('id', ''))
@@ -331,7 +333,7 @@ def install_experience(app):
 
     @app.get('/content',tags=['Published campaigns'])
     def published_content(request:Request):
-        with c.transaction() as state:
+        with c.read_transaction() as state:
             c.actor(state,request)
             return {'campaigns':[public_campaign(state,x) for x in sorted(state.get('campaigns',{}).values(),
                                   key=lambda x:(x['sort_order'],x['id'])) if live(x) and x['placement']!='email']}
@@ -339,13 +341,13 @@ def install_experience(app):
     @app.get('/pages/{slug}',tags=['Company information'])
     def company_page(slug:str,request:Request):
         c.require(slug in {'terms','privacy','refund','about','contact'},'Page not found.',404)
-        with c.transaction() as state:
+        with c.read_transaction() as state:
             c.actor(state,request)
             return {'page':state.get('company_pages',{}).get(slug)}
 
     @app.get('/admin/pages',tags=['Company information'])
     def list_pages(request:Request):
-        with c.transaction() as state:
+        with c.read_transaction() as state:
             content_actor(state,request)
             return {'pages':state.get('company_pages',{})}
 
@@ -363,7 +365,7 @@ def install_experience(app):
 
     @app.get('/admin/content',tags=['Campaign management'])
     def list_campaigns(request:Request):
-        with c.transaction() as state:
+        with c.read_transaction() as state:
             content_actor(state,request)
             return {'campaigns':[public_campaign(state,x) for x in state.get('campaigns',{}).values() if not x.get('deleted')]}
 
@@ -425,7 +427,7 @@ def install_experience(app):
 
     @app.get('/media/campaign/{media_id}',tags=['Public advertising assets'])
     def campaign_asset(media_id:str):
-        with c.transaction() as state:
+        with c.read_transaction() as state:
             item=state.get('campaign_media',{}).get(media_id)
             c.require(item,'Asset not found.',404)
             return Response(base64.b64decode(item['data_base64']),media_type=item['mime_type'],
@@ -456,7 +458,7 @@ def install_experience(app):
 
     @app.get('/admin/invitations',tags=['Staff invitations'])
     def list_invitations(request:Request):
-        with c.transaction() as state:
+        with c.read_transaction() as state:
             c.actor(state,request,'admin','security')
             return {'invitations':[dict(email=i['email'],role=i['role'],expires_at=i['expires'],
                   status='used or replaced' if i.get('used') else 'expired' if i['expires']<=time.time() else 'pending')
@@ -475,7 +477,7 @@ def install_experience(app):
 
     @app.get('/admin/mail-outbox',tags=['Mail delivery'])
     def mail_delivery_status(request:Request):
-        with c.transaction() as state:
+        with c.read_transaction() as state:
             c.actor(state,request,'admin','security')
             return {'messages':[{k:v for k,v in m.items() if k in {'id','to','kind','status','attempts','created_at','sent_at','last_error','next_attempt'}}
                                 for m in list(state.get('mail_outbox',{}).values())[-200:]]}
@@ -518,7 +520,11 @@ def install_experience(app):
         async with previous_lifespan(application) as state:
             async def mail_worker():
                 while True:
-                    try:await asyncio.to_thread(drain_mail_outbox)
+                    try:
+                        def maintain_and_send():
+                            with c.transaction() as state:c.expire_reservations(state)
+                            drain_mail_outbox()
+                        await asyncio.to_thread(maintain_and_send)
                     except Exception:pass  # Records remain queued for the next attempt.
                     await asyncio.sleep(30)
             task=asyncio.create_task(mail_worker()) if os.getenv('APP_ENV')!='test' else None

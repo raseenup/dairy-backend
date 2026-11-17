@@ -2,6 +2,7 @@
 SQLite transactions are the source of truth; no browser or in-memory success fallback.
 """
 from __future__ import annotations
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -14,6 +15,7 @@ import re
 import secrets
 import sqlite3
 import time
+import threading
 from contextlib import contextmanager
 from datetime import datetime, date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -29,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, TypeAdapter
 from PIL import Image
 from email_templates import build_email
+from mail_routing import sender_for
 
 IST = ZoneInfo('Asia/Kolkata')
 ROOT = Path(__file__).resolve().parent
@@ -113,10 +116,22 @@ def initial_state():
                 credit={}, branding={}, audit=[], idempotency={}, events={}, invites={}, revision=0,
                 tax={'gstin':'','vat_rate':0,'zatca_tin':'','zatca_mode':'india_gst','country':'India','state':'Kerala'})
 
+_pool = None
+_pool_lock = threading.Lock()
+
 def postgres_connect():
-    import psycopg
-    # TLS is mandatory for production database transport. Keep service credentials off browsers.
-    return psycopg.connect(DATABASE_URL,connect_timeout=10,sslmode='verify-full' if PRODUCTION else 'prefer',sslrootcert=(os.getenv('PGSSLROOTCERT') or 'system') if PRODUCTION else None,prepare_threshold=None)
+    """Reuse verified TLS connections across short transactions on free hosting."""
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                from psycopg_pool import ConnectionPool
+                kwargs = dict(connect_timeout=10, sslmode='verify-full' if PRODUCTION else 'prefer',
+                    sslrootcert=(os.getenv('PGSSLROOTCERT') or 'system') if PRODUCTION else None,
+                    prepare_threshold=None)
+                _pool = ConnectionPool(DATABASE_URL, min_size=0, max_size=4, timeout=10,
+                    kwargs=kwargs, check=ConnectionPool.check_connection, open=True)
+    return _pool.connection()
 
 @contextmanager
 def postgres_transaction():
@@ -163,6 +178,71 @@ def transaction():
     finally: c.close()
 
 
+@contextmanager
+def read_transaction(maintain=True):
+    """A current committed snapshot: no FOR UPDATE, no state rewrite, no cache."""
+    if DATABASE_URL:
+        with postgres_connect() as conn:
+            row=conn.execute('SELECT data FROM fmv_secure.application_state WHERE id=1').fetchone()
+            state=row[0] if row else initial_state()
+    else:
+        with sqlite3.connect(DB_PATH, timeout=10) as conn:
+            row=conn.execute('SELECT data FROM application_state WHERE id=1').fetchone()
+            state=json.loads(row[0]) if row else initial_state()
+    # Upgrade to a write transaction only when an actual reservation expires.
+    if maintain and any(o['status']=='Awaiting Payment' and (o.get('reservation_expires') or 0)<time.time()
+                        for o in state['orders'].values()):
+        with transaction() as current:
+            expire_reservations(current)
+            state=current
+    yield state
+
+
+def challenge_request(request, body):
+    """Hash passwords and deliver OTP mail without holding the application lock.
+
+    Only the resulting challenge is committed, after rechecking account and
+    invitation ownership. A provider failure leaves no usable challenge behind.
+    """
+    path=request.scope['route'].path
+    with read_transaction(maintain=False) as snapshot:
+        original_users={key:(u['password_hash'],u.get('token_version',0),u['approved'])
+                        for key,u in snapshot['users'].items()}
+        original_id=getattr(body,'challenge_id',None)
+        original_challenge=dict(snapshot['challenges'].get(original_id,{}))
+        result=dispatch(snapshot,request,body)
+    cid=result.get('challenge_id')
+    prepared=snapshot['challenges'].get(cid)
+    if not prepared:return result  # Unknown reset account: generic response.
+    with transaction() as current:
+        key=prepared['portal']+':'+prepared['email']
+        user=prepared['pending'] or snapshot['users'].get(key)
+        if prepared['purpose']=='signup':
+            require(key not in current['users'],ACCOUNT_EXISTS_MESSAGE,409)
+            require(not any(u['portal']==user['portal'] and u['phone']==user['phone']
+                            for u in current['users'].values()),ACCOUNT_EXISTS_MESSAGE,409)
+            if prepared['portal']=='admin':
+                invitation=current['invites'].get(hashlib.sha256(prepared['invitation'].encode()).hexdigest())
+                require(invitation and not invitation.get('used') and invitation['expires']>time.time()
+                        and invitation['email']==prepared['email'] and invitation['role']==user['role'],
+                        'Invitation is no longer valid.',403)
+        else:
+            live_user=current['users'].get(key)
+            require(live_user and (live_user['password_hash'],live_user.get('token_version',0),live_user['approved'])==original_users.get(key),
+                    'Account changed. Start verification again.',409)
+            if prepared['purpose']=='signin':require(live_user['approved'],'Your driver application is awaiting administrator approval.',403)
+            # Preserve the existing legacy password-hash upgrade.
+            live_user['password_hash']=user['password_hash']
+        if original_id:
+            require(current['challenges'].get(original_id)==original_challenge,
+                    'Verification changed. Start again with the latest code.',409)
+        for ident in [k for k,v in current['challenges'].items() if v['expires']<time.time()
+                      or (v['email']==prepared['email'] and v['portal']==prepared['portal'])]:
+            del current['challenges'][ident]
+        current['challenges'][cid]=prepared
+    return result
+
+
 def rate_limit(bucket, limit, seconds):
     if DATABASE_URL:
         return postgres_rate_limit(bucket,limit,seconds)
@@ -197,10 +277,7 @@ def send_code(email, code, purpose='signin', portal='customer', name='', promoti
             'https://api.resend.com/emails',
             headers={'Authorization': 'Bearer ' + api_key},
             json={
-                'from': os.getenv(
-                    'AUTH_EMAIL_SENDER',
-                    'First Milk Venture Auth <auth@firstmilkventure.com>'
-                ),
+                'from': sender_for(kind),
                 'to': [email],
                 'subject': content['subject'],
                 'html': content['html'],
@@ -317,8 +394,8 @@ def owned(s,collection,ident,u):
     require(v and v.get('owner')==u['email'],'Record not found.',404)
     return v
 
-def notify(s,email,title,message):
-    n=dict(id=uid('NTF'),owner=email,title=title,message=message,read=False,timestamp=now())
+def notify(s,email,title,message,portal='customer'):
+    n=dict(id=uid('NTF'),owner=email,portal=portal,title=title,message=message,read=False,timestamp=now())
     s['notifications'][n['id']]=n
 
 
@@ -383,6 +460,11 @@ def cancel_order(s,o):
     for l in o['items']:
         s['products'][l['product_id']]['stock_quantity']+=l['quantity'];s['products'][l['product_id']]['version']+=1
     o['status']='Cancelled'
+    o['payment_status']='cancelled'
+    o['cancelled_at']=now()
+    from experience import queue_order_email
+    queue_order_email(s,o,'cancelled')
+    notify(s,o['owner'],'Order cancelled',f"Your order {o['order_number']} has been cancelled.")
     for inv in s['invoices'].values():
         if inv['order_id']==o['id']: inv['status']='cancelled'
 
@@ -437,7 +519,7 @@ def sanitize_photo(data):
 def dispatch(s, request, body=None):
     path=request.scope['route'].path;method=request.method;params=request.path_params
     data=body.model_dump(exclude_unset=True) if isinstance(body,BaseModel) else (body or {})
-    if path=='/': return {'status':'online','service':'First Milk Venture Enterprise API','version':'9.0.0','country':'India','state':'Kerala','currency':'INR'}
+    if path=='/': return {'status':'online','service':'First Milk Venture Enterprise API','version':'10.0.0','country':'India','state':'Kerala','currency':'INR'}
     if path=='/config': return {'country':'India','state':'Kerala','currency':'INR','timezone':'Asia/Kolkata','online_payments':bool(os.getenv('RAZORPAY_KEY_ID') and os.getenv('RAZORPAY_KEY_SECRET'))}
     if path=='/auth/signup':
         valid_password(body.password);email=str(body.email).lower();key=body.portal+':'+email
@@ -502,7 +584,7 @@ def dispatch(s, request, body=None):
             if ch['portal']=='driver':s['drivers'][u['id']]=dict(id=u['id'],email=u['email'],name=u['full_name'],phone=u['phone'],address=u['address'],approved=False)
         del s['challenges'][body.challenge_id]
         audit(s,u['email'],'OTP_VERIFIED')
-        if not u['approved']:return {'pending_approval':True,'message':'Registration verified. An administrator must approve your driver account.'}
+        if not u['approved']:return {'pending_approval':True,'message':'Application submitted successfully. You will receive an email notification once your driver profile has been approved.'}
         return dict(session(s,u),message='Verification successful.')
     if path in {'/portal/auth/password-reset/request','/auth/password-reset/request'}:
         email=str(data.get('email','')).strip().lower();portal=data.get('portal','customer')
@@ -587,7 +669,10 @@ def admin_dispatch(s,u,r,d):
     if p=='/admin/products':
         money(d['price']);require(d['stock_quantity']>=0 and d['min_stock_threshold']>=0,'Invalid stock quantity.')
         require(d['name'].strip() and len(d['name'])<=150,'Product name is required.')
-        require(not d.get('image_url') or d['image_url'].startswith('https://'),'Image must use HTTPS.')
+        image_url=d.get('image_url','')
+        if image_url.startswith('/media/products/'):
+            require(image_url.rsplit('/',1)[-1] in s.get('product_media_index',{}),'Product image not found.',404)
+        else:require(not image_url or image_url.startswith('https://'),'Image must use HTTPS.')
         product=dict(d,id=uid('PROD'),currency='INR',version=1,tax_rate=0)
         s['products'][product['id']]=product;audit(s,u['email'],'PRODUCT_CREATED',product['id']);return {'product':product,'message':'Product created.'}
     if p in {'/admin/products/{product_id}/stock','/admin/products/{product_id}'}:
@@ -600,7 +685,7 @@ def admin_dispatch(s,u,r,d):
             if d.get('tax_rate') is not None:prod['tax_rate']=d['tax_rate']
         prod['version']+=1;audit(s,u['email'],'PRODUCT_UPDATED',prod['id']);return {'product':prod,'message':'Inventory saved.'}
     if p=='/admin/drivers':
-        if m=='GET':return [dict(v,key=v['id']) for v in s['drivers'].values() if not v.get('deleted')]
+        if m=='GET':return [dict({k:item for k,item in v.items() if k!='invitation_hash'},key=v['id']) for v in s['drivers'].values() if not v.get('deleted')]
         # Legacy create-driver schema retained: supplied key becomes an invitation hash, never an account password.
         require(len(d['driver_key'])>=16,'Driver invitation code must have at least 16 characters.')
         ph=phone_india(d['phone']);ident=uid('DRV')
@@ -609,9 +694,15 @@ def admin_dispatch(s,u,r,d):
         s['drivers'][ident]=record;audit(s,u['email'],'DRIVER_INVITED',ident)
         return {'message':'Driver invitation recorded. Driver must register, verify email, and receive approval.','driver':{k:v for k,v in record.items() if k!='invitation_hash'}}
     if p=='/admin/drivers/{driver_id}/approve':
-        dr=s['drivers'].get(pp['driver_id']);require(dr and dr.get('email'),'Registered driver not found.',404)
-        dr['approved']=True;s['users']['driver:'+dr['email']]['approved']=True
-        audit(s,u['email'],'DRIVER_APPROVED',dr['id']);return {'message':'Driver approved. They can sign in with OTP.'}
+        dr=s['drivers'].get(pp['driver_id']);require(dr and dr.get('email') and not dr.get('deleted'),'Registered driver not found.',404)
+        if not dr['approved']:
+            dr['approved']=True;s['users']['driver:'+dr['email']]['approved']=True
+            from experience import queue_email
+            queue_email(s,'driver-approved:'+dr['id'],dr['email'],'driver_approval',name=dr['name'],
+                message='Your driver profile has been approved successfully. Sign in with your password and email verification code.')
+            notify(s,dr['email'],'Driver profile approved','Your driver profile has been approved successfully.',portal='driver')
+            audit(s,u['email'],'DRIVER_APPROVED',dr['id'])
+        return {'message':'Driver approved. Approval email queued; they can sign in with OTP.'}
     if p=='/admin/drivers/{driver_key}':
         ident=pp['driver_key'];dr=s['drivers'].get(ident);require(dr,'Driver not found.',404)
         require(not any(o.get('assigned_driver_id')==ident and o['status'] not in {'Delivered','Cancelled','Failed'} for o in s['orders'].values()),'Reassign active deliveries before removing this driver.',409)
@@ -754,13 +845,11 @@ def driver_dispatch(s,u,r,d):
     if p=='/driver/expenses':
         require(active and active['status']!='completed','An active shift is required.',409)
         amount=money(d['amount']);require(amount>0 and d['category'] in {'Fuel','Toll','Parking','Other'},'Select a valid category and positive amount.')
-        e=dict(d,id=uid('EXP'),driver_id=u['id'],shift_id=active['id'],amount=amount/100,date=today(),created_at=now())
+        e=dict(d,id=uid('EXP'),driver_id=u['id'],shift_id=active['id'],amount=amount/100,date=today(),created_at=now(),approval_status='pending')
         s['expenses'][e['id']]=e;audit(s,u['email'],'EXPENSE_RECORDED',e['id']);return {'expense':e,'message':'Expense saved.'}
     if p=='/driver/reconciliation':
-        orders=[o for o in s['orders'].values() if o.get('assigned_driver_id')==u['id'] and str(o.get('delivered_time','')).startswith(today())]
-        ex=[e for e in s['expenses'].values() if e['driver_id']==u['id'] and e['date']==today()]
-        total=sum(money(o['cod_collected']) for o in orders);exp=sum(money(e['amount']) for e in ex)
-        return {'total_cod_collected':total/100,'total_expenses':exp/100,'net_cash_to_remit':(total-exp)/100,'expenses':ex,'currency':'INR'}
+        from operations import driver_cash
+        return driver_cash(s,u['id'])
     if p=='/driver/sos':
         alert=dict(d,id=uid('SOS'),driver_id=u['id'],driver_name=u['full_name'],created_at=now(),status='open')
         for key,limit in [('gps_lat',90),('gps_lng',180)]:
@@ -782,7 +871,10 @@ def customer_portal_dispatch(s,u,r,d):
     collection_routes={'/portal/team':('team','team_members'),'/portal/tickets':('tickets','tickets'),'/portal/quotes':('quotes','quotes'),
         '/portal/rma':('rma','claims'),'/portal/documents':('documents','documents'),'/portal/notifications':('notifications','notifications')}
     if m=='GET' and p in collection_routes:
-        col,key=collection_routes[p];return {key:mine(s,col,u)}
+        col,key=collection_routes[p]
+        rows=mine(s,col,u)
+        if col=='notifications':rows=[n for n in rows if n.get('portal','customer')=='customer']
+        return {key:rows}
     if p=='/portal/auth/2fa':
         require(d.get('enabled') is True,'Email OTP remains required for every sign-in.',400)
         return {'message':'Email OTP is required for every sign-in.','enabled':True}
@@ -858,7 +950,8 @@ def customer_portal_dispatch(s,u,r,d):
         s['credit'].setdefault(u['email'],{})['plan_tier']=d['plan_tier'];audit(s,u['email'],'PLAN_PREFERENCE_UPDATED')
         return {'credit_account':credit_summary(s,u),'message':'Plan preference saved. No automatic charge was made.'}
     if p=='/portal/notifications/mark-read':
-        for n in mine(s,'notifications',u):n['read']=True
+        for n in mine(s,'notifications',u):
+            if n.get('portal','customer')=='customer':n['read']=True
         return {'message':'Notifications marked read.'}
     if p=='/portal/surveys':
         require(1<=d['csat_score']<=5 and 0<=d['nps_score']<=10,'Invalid survey score.')
@@ -936,29 +1029,32 @@ def install(app, legacy):
             try:
                 ip=request.client.host if request.client else 'unknown'
                 # Do not trust a client-supplied X-Forwarded-For header.
-                rate_limit('ip:'+ip,600,60)
-                if request.url.path in public and request.method=='POST':rate_limit('auth:'+ip,40,300)
+                await asyncio.to_thread(rate_limit,'ip:'+ip,600,60)
+                if request.url.path in public and request.method=='POST':await asyncio.to_thread(rate_limit,'auth:'+ip,40,300)
                 if request.url.path in {'/auth/signup','/auth/signin','/portal/auth/password-reset/request','/auth/password-reset/request'}:
                     raw=await request.body()
                     try:
                         parsed=json.loads(raw);identifier=str(parsed.get('email') or parsed.get('identifier') or '').lower()
-                        rate_limit('auth-account:'+hashlib.sha256(identifier.encode()).hexdigest(),8,300)
+                        await asyncio.to_thread(rate_limit,'auth-account:'+hashlib.sha256(identifier.encode()).hexdigest(),8,300)
                     except (ValueError,AttributeError):pass
-                if request.url.path.startswith(('/admin/','/driver/')) and request.url.path not in public and request.method!='OPTIONS':
-                    with transaction() as state: actor(state,request)
+                if request.url.path.startswith(('/admin/','/driver/')) and request.url.path not in public and request.method!='OPTIONS' and not request.headers.get('authorization','').startswith('Bearer '):
+                    actor({'users':{},'sessions':{}},request)
                 response=await call_next(request)
             except HTTPException as e:response=JSONResponse({'detail':e.detail},status_code=e.status_code)
         response.headers.update({'X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin','X-Frame-Options':'DENY',
             'Permissions-Policy':'camera=(self), geolocation=(self), microphone=()',
             'Content-Security-Policy':"default-src 'self'; script-src 'self' https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: https:; connect-src 'self' "+' '.join(origins)+" https://api.razorpay.com https://cdn.tailwindcss.com; frame-src https://api.razorpay.com https://checkout.razorpay.com; media-src 'self' blob: https://backend.firstmilkventure.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"})
-        if not request.url.path.startswith(('/customer/','/driver-portal/','/admin-portal/')):response.headers['Cache-Control']='no-store'
+        if not request.url.path.startswith(('/customer/','/driver-portal/','/admin-portal/','/media/')):response.headers['Cache-Control']='no-store'
         if PRODUCTION:response.headers['Strict-Transport-Security']='max-age=31536000; includeSubDomains'
         return response
 
     def register(path,methods,model=None,tags=None):
         def endpoint(request,body=None):
-            with transaction() as s:
-                expire_reservations(s)
+            if path in {'/auth/signup','/auth/signin','/auth/request-otp','/auth/password-reset/request','/portal/auth/password-reset/request'}:
+                return challenge_request(request,body)
+            context=read_transaction if request.method in {'GET','HEAD'} else transaction
+            with context() as s:
+                if request.method not in {'GET','HEAD'}:expire_reservations(s)
                 return dispatch(s,request,body)
         endpoint.__name__='secure_'+methods[0].lower()+'_'+re.sub(r'[^a-zA-Z0-9]+','_',path).strip('_')
         parameters=[inspect.Parameter('request',inspect.Parameter.POSITIONAL_OR_KEYWORD,annotation=Request)]
@@ -1000,7 +1096,7 @@ def install(app, legacy):
 
     @app.get('/portal/billing/invoices/{invoice_id}/download',tags=['Invoice exports'])
     def download_invoice(invoice_id:str,request:Request):
-        with transaction() as s:
+        with read_transaction() as s:
             u,_=actor(s,request,'customer');inv=owned(s,'invoices',invoice_id,u);o=owned(s,'orders',inv['order_id'],u)
             # Accurate machine-readable sales invoice; statutory e-invoice integration is not claimed.
             return JSONResponse(dict(inv,items=o['items'],subtotal_paise=o['subtotal_paise'],tax_paise=o['tax_paise'],total_paise=o['total_paise'],seller='First Milk Venture',country='India',state='Kerala'),
@@ -1009,7 +1105,7 @@ def install(app, legacy):
     @app.get('/portal/billing/statement',tags=['Invoice exports'])
     def statement(request:Request):
         import csv
-        with transaction() as s:
+        with read_transaction() as s:
             u,_=actor(s,request,'customer');out=io.StringIO();writer=csv.writer(out)
             writer.writerow(['Invoice','Date','Currency','Amount','Status'])
             for inv in mine(s,'invoices',u):writer.writerow([inv['id'],inv['date'],'INR',inv['total'],inv['status']])
@@ -1018,7 +1114,7 @@ def install(app, legacy):
     @app.get('/admin/attendance/export',tags=['Attendance exports'])
     def attendance_export(request:Request):
         import csv
-        with transaction() as s:
+        with read_transaction() as s:
             actor(s,request,'admin','drivers');out=io.StringIO();w=csv.writer(out)
             w.writerow(['Driver','Clock in','Clock out','Work seconds','Break seconds','Vehicle'])
             month=request.query_params.get('month',today()[:7])
@@ -1039,7 +1135,7 @@ def install(app, legacy):
                 return FileResponse(target)
             return serve
         app.add_api_route(url+'/',file_handler(ROOT.parent/folder/'index.html'),methods=['GET'],include_in_schema=False)
-        for filename in ['index.html','config.js','portal-core.js','portal.css','tailwind.css','app.js','admin.js','driver.js']:
+        for filename in ['index.html','config.js','portal-core.js','portal.css','tailwind.css','design-system.css','portal-theme.css','app.js','admin.js','driver.js','experience.js','experience.css','operations.js','operations.css','cash.js','cash.css']:
             target=ROOT.parent/folder/filename
             if target.exists():
                 app.add_api_route(url+'/'+filename,file_handler(target),methods=['GET'],include_in_schema=False)
@@ -1105,7 +1201,7 @@ def install(app, legacy):
 
     @app.get('/portal/files/{file_id}',tags=['Private files'])
     def private_file(file_id:str,request:Request):
-        with transaction() as state:
+        with read_transaction() as state:
             u,_=actor(state,request,'customer');item=owned(state,'uploads',file_id,u)
             # Generated IDs avoid filename/header injection; download disposition prevents inline HTML execution.
             from urllib.parse import quote
@@ -1113,7 +1209,7 @@ def install(app, legacy):
 
     @app.get('/admin/deliveries/{delivery_id}/proof',tags=['Delivery proof'])
     def delivery_proof(delivery_id:str,request:Request):
-        with transaction() as state:
+        with read_transaction() as state:
             actor(state,request,'admin','orders');order=state['orders'].get(delivery_id)
             require(order and order.get('epod_photo_url'),'Proof photograph not found.',404)
             return Response(base64.b64decode(order['epod_photo_url'].split(',',1)[1]),media_type='image/jpeg',headers={'Content-Disposition':'attachment; filename="proof.jpg"'})
@@ -1137,3 +1233,6 @@ def install(app, legacy):
     except OSError:pass
     from experience import install_experience
     install_experience(app)
+
+    from operations import install_operations
+    install_operations(app)
