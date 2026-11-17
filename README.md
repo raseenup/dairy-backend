@@ -1,3 +1,13 @@
+# First Milk Venture v11 driver workspace
+
+See [UPGRADE_V11.md](UPGRADE_V11.md) for customer order sections, subscription
+emails, the driver profile menu, incentives, cash-aware earnings/payout approvals,
+private vehicle documents, ratings, order chat and coordinate route planning.
+Deploy the backend before all three matching portals. Existing v10 setup and
+historical documentation remain below.
+
+---
+
 # First Milk Venture v10 portal fixes
 
 See [UPGRADE_V10.md](UPGRADE_V10.md) for the coordinated backend/portal deployment,

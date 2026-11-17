@@ -101,7 +101,7 @@ def clean_text(value, limit=3000):
     return value
 
 def public_user(u):
-    return {k: u.get(k, '') for k in ('id','email','phone','full_name','address','portal','role','approved','content_editor')}
+    return {k: u.get(k, '') for k in ('id','email','phone','full_name','address','portal','role','approved','content_editor','driver_manager','payout_approver')}
 
 def initial_state():
     # Catalog retained from the supplied project; no fabricated users, orders or payments.
@@ -437,6 +437,7 @@ def make_order(s,u,body,key):
     oid=uid('FMV'); otp=f'{secrets.randbelow(9000)+1000}'
     o=dict(id=oid,order_number=oid,owner=u['email'],user_email=u['email'],customer_name=chosen.get('recipient') or u['full_name'],
         customer_phone=chosen.get('phone') or u['phone'],address_id=body.address_id,delivery_address=addr,items=lines,items_summary=', '.join(f"{l['quantity']}x {l['name']}" for l in lines),
+        delivery_latitude=chosen.get('latitude'),delivery_longitude=chosen.get('longitude'),
         quantity=sum(quantities.values()),subtotal_paise=subtotal,tax_paise=tax,total_paise=subtotal+tax,total_amount=(subtotal+tax)/100,
         currency='INR',payment_method='Online' if online else 'COD',payment_status='pending' if online else 'cod_due',
         cod_amount=0 if online else (subtotal+tax)/100,cod_collected=0,status='Awaiting Payment' if online else 'Unassigned',
@@ -450,6 +451,8 @@ def make_order(s,u,body,key):
     s['invoices'][invoice['id']]=invoice
     notify(s,u['email'],'Order placed',f'Order {oid}. Delivery PIN: {otp}. Share the PIN only at delivery.')
     from experience import queue_order_email
+    from workforce import notify_managers
+    notify_managers(s,'New order awaiting assignment',oid)
     queue_order_email(s,o,'placed')
     audit(s,u['email'],'ORDER_PLACED',oid)
     return o
@@ -519,7 +522,7 @@ def sanitize_photo(data):
 def dispatch(s, request, body=None):
     path=request.scope['route'].path;method=request.method;params=request.path_params
     data=body.model_dump(exclude_unset=True) if isinstance(body,BaseModel) else (body or {})
-    if path=='/': return {'status':'online','service':'First Milk Venture Enterprise API','version':'10.0.0','country':'India','state':'Kerala','currency':'INR'}
+    if path=='/': return {'status':'online','service':'First Milk Venture Enterprise API','version':'11.0.0','country':'India','state':'Kerala','currency':'INR'}
     if path=='/config': return {'country':'India','state':'Kerala','currency':'INR','timezone':'Asia/Kolkata','online_payments':bool(os.getenv('RAZORPAY_KEY_ID') and os.getenv('RAZORPAY_KEY_SECRET'))}
     if path=='/auth/signup':
         valid_password(body.password);email=str(body.email).lower();key=body.portal+':'+email
@@ -654,11 +657,21 @@ def dispatch(s, request, body=None):
         require(data['quantity']>0 and data['frequency'] in {'Daily','Weekly','Alternate Days'},'Invalid subscription.')
         try:require(date.fromisoformat(data['start_date'])>=date.fromisoformat(today()),'Start date is in the past.')
         except ValueError:raise HTTPException(422,'Invalid start date.')
-        sub=dict(data,id=uid('SUB'),owner=u['email'],status='active',product_name=p['name'])
-        s['subscriptions'][sub['id']]=sub;audit(s,u['email'],'SUBSCRIPTION_CREATED',sub['id']);return {'subscription':sub,'message':'Subscription scheduled. Stock is deducted for each generated delivery.'}
+        sub=dict(data,id=uid('SUB'),owner=u['email'],status='active',product_name=p['name'],version=1,created_at=now())
+        s['subscriptions'][sub['id']]=sub
+        from workforce import subscription_email
+        subscription_email(s,u,sub,'created')
+        audit(s,u['email'],'SUBSCRIPTION_CREATED',sub['id']);return {'subscription':sub,'message':'Subscription scheduled. Stock is deducted for each generated delivery.'}
     if path=='/subscriptions/{subscription_id}':
         sub=owned(s,'subscriptions',params['subscription_id'],u)
-        require(data.get('status') in {'active','paused','cancelled'},'Invalid subscription status.');sub['status']=data['status'];audit(s,u['email'],'SUBSCRIPTION_UPDATED',sub['id']);return sub
+        status=data.get('status')
+        require(status in {'active','paused','cancelled'},'Invalid subscription status.')
+        if status==sub['status']:return sub
+        require(sub['status']!='cancelled','A cancelled subscription cannot be resumed. Create a new subscription.',409)
+        sub.update(status=status,version=sub.get('version',1)+1,updated_at=now())
+        from workforce import subscription_email
+        subscription_email(s,u,sub,{'paused':'paused','active':'resumed','cancelled':'cancelled'}[status])
+        audit(s,u['email'],'SUBSCRIPTION_UPDATED',sub['id']);return sub
     if portal=='admin':return admin_dispatch(s,u,request,data)
     if portal=='driver':return driver_dispatch(s,u,request,data)
     return customer_portal_dispatch(s,u,request,data)
@@ -717,7 +730,9 @@ def admin_dispatch(s,u,r,d):
         o=s['orders'].get(pp['delivery_id']);dr=s['drivers'].get(d['driver_key'])
         require(o and dr and dr['approved'] and not dr.get('deleted'),'Order or approved driver not found.',404)
         require(o['status'] not in {'Delivered','Cancelled','Awaiting Payment'},'Order cannot be assigned.',409)
+        previous_driver=o.get('assigned_driver_id')
         o.update(assigned_driver_id=dr['id'],assigned_driver=dr['name'],status='Assigned')
+        if previous_driver!=dr['id']:notify(s,dr['email'],'New delivery assigned',o['order_number'],portal='driver')
         audit(s,u['email'],'DRIVER_ASSIGNED',o['id']);return {'message':'Driver assignment saved.','order':order_view(o)}
     if p=='/admin/generate-deliveries':
         target=d.get('target_date') or today()
@@ -828,6 +843,8 @@ def driver_dispatch(s,u,r,d):
             if o['payment_method']=='Online':require(o['payment_status']=='paid','Online payment is not confirmed.',409)
             o.update(epod_photo_url=photo,cod_collected=cod/100,delivered_time=now(),status='Delivered',
                 payment_status='cod_collected' if o['payment_method']=='COD' else 'paid')
+            from workforce import record_delivery_earnings
+            record_delivery_earnings(s,o)
             for inv in s['invoices'].values():
                 if inv['order_id']==o['id']:inv['status']='paid'
         else:
@@ -1135,7 +1152,7 @@ def install(app, legacy):
                 return FileResponse(target)
             return serve
         app.add_api_route(url+'/',file_handler(ROOT.parent/folder/'index.html'),methods=['GET'],include_in_schema=False)
-        for filename in ['index.html','config.js','portal-core.js','portal.css','tailwind.css','design-system.css','portal-theme.css','app.js','admin.js','driver.js','experience.js','experience.css','operations.js','operations.css','cash.js','cash.css']:
+        for filename in ['index.html','config.js','portal-core.js','portal.css','tailwind.css','design-system.css','portal-theme.css','app.js','admin.js','driver.js','experience.js','experience.css','operations.js','operations.css','cash.js','cash.css','workspace.js','workspace.css','workforce.js','workforce.css','orders.js','orders.css']:
             target=ROOT.parent/folder/filename
             if target.exists():
                 app.add_api_route(url+'/'+filename,file_handler(target),methods=['GET'],include_in_schema=False)
@@ -1236,3 +1253,6 @@ def install(app, legacy):
 
     from operations import install_operations
     install_operations(app)
+
+    from workforce import install_workforce
+    install_workforce(app)

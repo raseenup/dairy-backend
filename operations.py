@@ -235,6 +235,8 @@ def install_operations(app):
                     if allowed(permission):result[name] = c.admin_dispatch(state, user, scoped_request(request, '/admin/'+path), {})
                 if allowed('orders'):result['order_summary'] = order_summary(state)
                 if allowed('finance'):result['finance'] = finance_overview(state, user, request)
+            from workforce import extend_snapshot
+            extend_snapshot(state,user,result,request)
             return result
 
     @app.get('/admin/order-summary', tags=['Dispatch updates'])
