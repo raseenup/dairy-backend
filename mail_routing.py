@@ -21,7 +21,7 @@ def category(kind):
         return 'auth'
     if kind in {'order_shipped', 'order_out_for_delivery', 'order_delivered', 'delivery_confirmation'}:
         return 'delivery'
-    if kind.startswith('order_') or kind == 'subscription_confirmation':
+    if kind.startswith('order_') or kind.startswith('subscription_'):
         return 'orders'
     if kind in {'driver_approval', 'driver_application'}:
         return 'drivers'

@@ -143,6 +143,10 @@ for _kind, _subject, _purpose, _title, _intro, _base in (
     ('signup_verification','First Milk — sign-up verification code','Sign up','Verify your new account.','Use this code to finish creating your First Milk account.','verification'),
     ('signin_verification','First Milk — sign-in verification code','Sign in','Confirm your sign-in.','Use this code to complete your First Milk sign-in.','verification'),
     ('admin_invitation','First Milk — administrator invitation','Administrator invitation','Your workspace invitation.','You have been invited to join the First Milk administration workspace.','welcome'),
+    ('subscription_created','First Milk — subscription started','Subscription started','Your fresh routine is scheduled.','Your subscription has been created. Review your delivery schedule below.','subscription_confirmation'),
+    ('subscription_paused','First Milk — subscription paused','Subscription paused','Your deliveries are paused.','Your subscription is paused. Resume it from My Orders when you are ready.','subscription_confirmation'),
+    ('subscription_resumed','First Milk — subscription resumed','Subscription resumed','Your fresh routine is back.','Your subscription has resumed. Future deliveries follow the schedule below.','subscription_confirmation'),
+    ('subscription_cancelled','First Milk — subscription cancelled','Subscription cancelled','Your subscription is cancelled.','Future deliveries for this subscription have been stopped. Existing orders retain their recorded status.','subscription_confirmation'),
     ('order_placed','First Milk — order placed','Order placed','Your order is placed.','We have recorded your order. Review the delivery and payment details below.','order_confirmation'),
     ('order_shipped','First Milk — your order has shipped','Order shipped','Your order is on its way.','Your order has been dispatched. Follow its progress in My Orders.','order_confirmation'),
     ('order_out_for_delivery','First Milk — out for delivery','Out for delivery','Next stop: your doorstep.','Your order is out for delivery. Keep your delivery PIN ready.','order_confirmation'),
@@ -268,7 +272,7 @@ def build_email(
     code_block = ""
     if is_otp:
         code_block = (
-            '<p style="margin:12px 0 8px;font:700 36px/48px Courier New,monospace;letter-spacing:5px;color:' + _NAVY + ';">' + _escape(code) + '</p>'
+            '<p style="margin:12px 0 8px;font:700 36px/48px Courier New,monospace;letter-spacing:0;user-select:all;-webkit-user-select:all;white-space:nowrap;color:' + _NAVY + ';">' + _escape(code) + '</p>'
             '<p style="margin:0;font:14px/22px Arial,sans-serif;color:' + _MUTED + ';">Expires in <strong>5 minutes</strong>. Use this code once. Never share it with anyone.</p>'
         )
     message_block = (
@@ -342,6 +346,7 @@ def build_email(
 
     plain = ["FIRST MILK VENTURE", "", title, "", greeting, intro]
     if is_otp:
+        plain = [code + " is your First Milk verification code.", ""] + plain
         plain += ["", content["panel_title"] + ": " + code,
                   "Expires in 5 minutes. Use this code once. Never share it with anyone."]
     if rows:
