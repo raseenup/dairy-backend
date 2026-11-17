@@ -1,3 +1,14 @@
+# First Milk Venture v10 portal fixes
+
+See [UPGRADE_V10.md](UPGRADE_V10.md) for the coordinated backend/portal deployment,
+department email senders, product photo/GIF editing, live order queues and
+accounts-confirmed driver cash handovers. Deploy the backend first. Run
+`python -m pytest -q` for the 91 isolated backend regressions.
+
+The v9 and original project documentation is preserved below for reference.
+
+---
+
 # First Milk Venture v9 update
 
 For the first Super Admin on **Render Free**, follow

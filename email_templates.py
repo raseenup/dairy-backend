@@ -146,6 +146,8 @@ for _kind, _subject, _purpose, _title, _intro, _base in (
     ('order_placed','First Milk — order placed','Order placed','Your order is placed.','We have recorded your order. Review the delivery and payment details below.','order_confirmation'),
     ('order_shipped','First Milk — your order has shipped','Order shipped','Your order is on its way.','Your order has been dispatched. Follow its progress in My Orders.','order_confirmation'),
     ('order_out_for_delivery','First Milk — out for delivery','Out for delivery','Next stop: your doorstep.','Your order is out for delivery. Keep your delivery PIN ready.','order_confirmation'),
+    ('order_cancelled','First Milk — order cancelled','Order cancelled','Your order has been cancelled.','Your order is cancelled. Review the order details below.','order_confirmation'),
+    ('cash_receipt','First Milk — accounts received your cash','Cash received by accounts','Your cash handover is recorded.','Accounts has confirmed receipt of your cash. Your driver balance has been updated.','payment_receipt'),
     ('order_delivered','First Milk — order delivered','Order delivered','Delivered. Thank you!','Your driver has confirmed delivery using your delivery PIN and proof of delivery.','delivery_confirmation'),
 ):
     _COPY[_kind] = dict(_COPY[_base],subject=_subject,purpose=_purpose,eyebrow=_purpose.upper(),title=_title,intro=_intro,preheader=_intro)

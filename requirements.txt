@@ -26,3 +26,6 @@ psycopg[binary]>=3.2.0,<4.0
 python-dotenv>=1.0.1,<2.0
 httpx[socks]==0.28.1
 reportlab>=4.2.0,<5.0
+
+# Reuse a small, verified-TLS PostgreSQL connection pool.
+psycopg_pool>=3.2.0,<4.0
