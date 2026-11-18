@@ -79,6 +79,25 @@ deployments; independently hosted portals serve it with their other local assets
 
 ## Verification
 
+### Render and Supabase TLS
+
+With `APP_ENV=production`, PostgreSQL uses `verify-full` for both certificate
+and hostname verification. Managed production hosts under `*.pooler.supabase.com`
+use `certs/supabase-production-roots.pem`. The connection pool loads this
+choice once at startup. Other hosts use the system trust store. An explicit
+`PGSSLROOTCERT` or connection-string `sslrootcert` takes precedence and must
+name a trust store available to the deployed process.
+
+The bundle contains the two public production certificates distributed with
+the Supabase CLI. The first certificate also matches the Supabase dashboard
+download. Review certificate rotations against these upstream sources.
+
+- [Production certificate issued in 2021](https://github.com/supabase/cli/blob/0d1a3be4cd00f660b3678759cc39b879d64787bb/apps/cli/src/command-internal/supabase-ca-templates/prod-ca-2021.ts)
+- [Production certificate issued in 2025](https://github.com/supabase/cli/blob/0d1a3be4cd00f660b3678759cc39b879d64787bb/apps/cli/src/command-internal/supabase-ca-templates/prod-ca-2025.ts)
+- [Supabase SSL configuration](https://supabase.com/docs/guides/platform/ssl-enforcement)
+
+### Original v13 checks
+
 `python -m pytest -q`: **121 passed**. This includes concurrent rate limits,
 window rollover, bounded cleanup, existing auth/OTP, checkout/stock, roles,
 snapshots, chat/media, payroll and ad regressions. Existing dependency deprecation

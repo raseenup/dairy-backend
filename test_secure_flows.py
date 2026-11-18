@@ -199,7 +199,17 @@ def test_logout_reset_invalidate_old_tokens():
     assert client.get('/auth/session',headers=h).status_code==401
     signed=verify(client.post('/auth/signin',json={'identifier':u['email'],'password':PASSWORD}));old={'Authorization':'Bearer '+signed.json()['access_token']}
     reset=client.post('/auth/password-reset/request',json={'email':u['email'],'portal':'customer'});result=verify(reset)
-    assert client.post('/auth/password-reset/confirm',json={'reset_token':result.json()['reset_token'],'new_password':'ChangedPassword123!'}).status_code==200
+    challenge_id = reset.json()['challenge_id']
+    reset_token = result.json()['reset_token']
+    assert reset_token != challenge_id
+    with sec.read_transaction(maintain=False) as state:
+        challenge = state['challenges'][challenge_id]
+        assert 'code_hash' not in challenge and reset_token.partition('.')[2] not in json.dumps(challenge)
+    confirm = '/auth/password-reset/confirm'
+    password = 'ChangedPassword123!'
+    assert client.post(confirm,json={'reset_token':challenge_id,'new_password':password}).status_code==400
+    assert client.post(confirm,json={'reset_token':reset_token,'new_password':password}).status_code==200
+    assert client.post(confirm,json={'reset_token':reset_token,'new_password':password}).status_code==400
     assert client.get('/auth/session',headers=old).status_code==401
 
 
