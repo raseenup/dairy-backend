@@ -134,8 +134,47 @@ def test_concurrent_mail_workers_claim_once(monkeypatch):
     def send(item):
         sent.append(item['id']);time.sleep(.03);return 'provider-id'
     monkeypatch.setattr(exp,'send_rendered_mail',send)
-    with ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(lambda _:exp.drain_mail_outbox(),range(2)))
+    with ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(lambda _:exp.process_due_work(),range(2)))
     assert len(sent)==1
+
+
+def test_background_check_respects_expiry_retry_and_active_leases(monkeypatch):
+    stamp = time.time()
+    with sec.transaction() as state:
+        state['orders']['fixture'] = {'status':'Awaiting Payment', 'reservation_expires':stamp+60}
+        state['mail_outbox'] = {
+            'complete': {'status':'sent', 'next_attempt':0},
+            'scheduled': {'status':'retry', 'next_attempt':stamp+60},
+            'inflight': {'status':'sending', 'next_attempt':0, 'lease_until':stamp+60},
+        }
+    assert exp.background_work_due(stamp) == (False, False)
+    assert exp.background_work_due(stamp+60) == (False, True)
+    assert exp.background_work_due(stamp+61) == (True, True)
+    monkeypatch.setattr(sec, 'transaction', lambda: pytest.fail('idle worker took a write lock'))
+    monkeypatch.setattr(sec, 'read_transaction', lambda **kwargs: pytest.fail('idle worker loaded private state'))
+    exp.process_due_work()
+
+
+def test_background_expiry_releases_stock_and_delivers_newly_queued_mail(monkeypatch):
+    monkeypatch.setenv('RAZORPAY_KEY_ID', 'isolated-fixture')
+    monkeypatch.setenv('RAZORPAY_KEY_SECRET', 'isolated-fixture')
+    customer, _ = account()
+    response = client.post('/orders/checkout', headers={**customer, 'Idempotency-Key':'background-expiry-qa'},
+                           json={'items':[{'product_id':'prod-4', 'quantity':2}], 'payment_method':'Online'})
+    assert response.status_code == 200
+    order_id = response.json()['order']['id']
+    delivered = []
+    monkeypatch.setattr(exp, 'send_rendered_mail', lambda item: delivered.append(item['kind']) or 'fixture-id')
+    exp.process_due_work()
+    with sec.transaction() as state:
+        state['orders'][order_id]['reservation_expires'] = time.time()-1
+    assert exp.background_work_due(time.time()) == (True, False)
+    exp.process_due_work()
+    exp.process_due_work()
+    with sec.read_transaction(maintain=False) as state:
+        assert state['orders'][order_id]['status'] == 'Cancelled'
+        assert state['products']['prod-4']['stock_quantity'] == 250
+    assert delivered == ['order_placed', 'order_cancelled']
 
 
 def test_campaign_permissions_delegation_versions_and_schedule():

@@ -9,6 +9,20 @@ def test_read_root():
     assert response.status_code == 200
     assert response.json()["status"] == "online"
 
+def test_public_metadata_keeps_limits_without_reading_private_state(monkeypatch):
+    import secure_backend as secure
+    hits = []
+    monkeypatch.setattr(secure, 'rate_limit', lambda bucket, limit, seconds: hits.append((bucket, limit, seconds)))
+    monkeypatch.setattr(secure, 'read_transaction', lambda: pytest.fail('public metadata read the state'))
+    status = client.get('/')
+    config = client.get('/config')
+    assert status.status_code == config.status_code == 200
+    assert status.json()['version'] == app.version
+    assert config.json()['currency'] == 'INR'
+    assert len(hits) == 2 and all(bucket.startswith('ip:') for bucket, _, _ in hits)
+    assert config.headers['Cache-Control'] == 'no-store'
+    assert config.headers['X-Content-Type-Options'] == 'nosniff'
+
 def test_admin_unauthorized_access():
     response = client.post("/admin/generate-deliveries", headers={"x-admin-key": "invalid_key"})
     assert response.status_code == 403

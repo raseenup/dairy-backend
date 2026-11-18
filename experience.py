@@ -9,10 +9,12 @@ import asyncio
 import base64
 import hashlib
 import io
+import logging
 import os
 import secrets
+import sqlite3
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from datetime import datetime
 from typing import Literal
 
@@ -111,6 +113,47 @@ def send_rendered_mail(item):
         return str(response.json().get('id', ''))
     except (httpx.HTTPError, ValueError):
         raise HTTPException(503, 'Mail provider could not confirm delivery.')
+
+
+def background_work_due(stamp):
+    """One read returns two flags. Idle workers never transfer or lock the state."""
+    c = core()
+    if c.DATABASE_URL:
+        with c.postgres_connect() as conn:
+            row = conn.execute("""
+                WITH clock AS (SELECT jsonb_build_object('now', %s::double precision) AS vars)
+                SELECT jsonb_path_exists(data,
+                           '$.orders.* ? (@.status == "Awaiting Payment" && @.reservation_expires < $now)', vars),
+                       jsonb_path_exists(data,
+                           '$.mail_outbox.* ? ((@.status == "queued" || @.status == "retry" || @.status == "sending")
+                              && @.next_attempt <= $now && (!exists (@.lease_until) || @.lease_until <= $now))', vars)
+                FROM fmv_secure.application_state CROSS JOIN clock WHERE id = 1
+            """, (stamp,)).fetchone()
+    else:
+        with closing(sqlite3.connect(c.DB_PATH, timeout=10)) as conn:
+            row = conn.execute("""
+                SELECT EXISTS (SELECT 1 FROM json_each(data, '$.orders')
+                               WHERE json_extract(value, '$.status') = 'Awaiting Payment'
+                                 AND json_extract(value, '$.reservation_expires') < :now),
+                       EXISTS (SELECT 1 FROM json_each(data, '$.mail_outbox')
+                               WHERE json_extract(value, '$.status') IN ('queued', 'retry', 'sending')
+                                 AND json_extract(value, '$.next_attempt') <= :now
+                                 AND coalesce(json_extract(value, '$.lease_until'), 0) <= :now)
+                FROM application_state WHERE id = 1
+            """, {'now': stamp}).fetchone()
+    return (bool(row[0]), bool(row[1])) if row else (False, False)
+
+
+def process_due_work():
+    reservations_due, mail_due = background_work_due(time.time())
+    if reservations_due:
+        c = core()
+        with c.transaction() as state:
+            c.expire_reservations(state)
+    # Expiry can enqueue a new order email. The sender checks the lease under
+    # the write lock, even if other workers observed the same due message.
+    if mail_due or reservations_due:
+        drain_mail_outbox()
 
 
 def drain_mail_outbox(limit=20):
@@ -539,11 +582,11 @@ def install_experience(app):
     async def drain_after_commit(request,call_next):
         response=await call_next(request)
         if request.method in {'POST','PATCH','DELETE'} and response.status_code<400 and os.getenv('APP_ENV')!='test':
-            from starlette.background import BackgroundTask, BackgroundTasks
+            from starlette.background import BackgroundTasks
             previous=response.background
             response.background=BackgroundTasks()
             if previous:response.background.add_task(previous)
-            response.background.add_task(drain_mail_outbox)
+            response.background.add_task(process_due_work)
         return response
 
     previous_lifespan=app.router.lifespan_context
@@ -553,11 +596,9 @@ def install_experience(app):
             async def mail_worker():
                 while True:
                     try:
-                        def maintain_and_send():
-                            with c.transaction() as state:c.expire_reservations(state)
-                            drain_mail_outbox()
-                        await asyncio.to_thread(maintain_and_send)
-                    except Exception:pass  # Records remain queued for the next attempt.
+                        await asyncio.to_thread(process_due_work)
+                    except Exception:
+                        logging.getLogger(__name__).warning('Reservation and mail processing failed. Retrying on the next cycle.')
                     await asyncio.sleep(30)
             task=asyncio.create_task(mail_worker()) if os.getenv('APP_ENV')!='test' else None
             try:yield state

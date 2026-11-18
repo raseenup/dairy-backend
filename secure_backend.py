@@ -138,9 +138,17 @@ def postgres_transaction():
     with postgres_connect() as conn:
         # migration_v8_security.sql must be applied once by the database owner.
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO fmv_secure.application_state (id,data) VALUES (1,%s::jsonb) ON CONFLICT (id) DO NOTHING",(json.dumps(initial_state()),))
-            cur.execute('SELECT data FROM fmv_secure.application_state WHERE id=1 FOR UPDATE')
-            state=cur.fetchone()[0]
+            lock_state = 'SELECT data FROM fmv_secure.application_state WHERE id=1 FOR UPDATE'
+            cur.execute(lock_state)
+            row = cur.fetchone()
+            if row is None:
+                # Concurrent first starts can both see an empty table. Lock and
+                # reread the winning insert before using its committed state.
+                cur.execute("INSERT INTO fmv_secure.application_state (id,data) VALUES (1,%s::jsonb) ON CONFLICT (id) DO NOTHING",
+                            (json.dumps(initial_state()),))
+                cur.execute(lock_state)
+                row = cur.fetchone()
+            state = row[0]
             yield state
             cur.execute('UPDATE fmv_secure.application_state SET data=%s::jsonb WHERE id=1',(json.dumps(state,allow_nan=False),))
 
@@ -537,7 +545,7 @@ def sanitize_photo(data):
 def dispatch(s, request, body=None):
     path=request.scope['route'].path;method=request.method;params=request.path_params
     data=body.model_dump(exclude_unset=True) if isinstance(body,BaseModel) else (body or {})
-    if path=='/': return {'status':'online','service':'First Milk Venture Enterprise API','version':'11.0.0','country':'India','state':'Kerala','currency':'INR'}
+    if path=='/': return {'status':'online','service':'First Milk Venture Enterprise API','version':request.app.version,'country':'India','state':'Kerala','currency':'INR'}
     if path=='/config': return {'country':'India','state':'Kerala','currency':'INR','timezone':'Asia/Kolkata','online_payments':bool(os.getenv('RAZORPAY_KEY_ID') and os.getenv('RAZORPAY_KEY_SECRET'))}
     if path=='/auth/signup':
         valid_password(body.password);email=str(body.email).lower();key=body.portal+':'+email
@@ -563,7 +571,7 @@ def dispatch(s, request, body=None):
         return issue_challenge(s,u,'signin')
     if path=='/auth/request-otp':
         ch=s['challenges'].get(body.challenge_id)
-        require(ch and ch['expires']>time.time(),'Verification expired. Start sign-in again.',400)
+        require(ch and ch['expires']>time.time() and not ch.get('reset_verified'),'Verification expired. Start sign-in again.',400)
         server_time = time.time()
         resend_available_at = ch['sent_at'] + 60
         if server_time < resend_available_at:
@@ -577,15 +585,18 @@ def dispatch(s, request, body=None):
         return issue_challenge(s,u,ch['purpose'],ch['pending'],ch.get('invitation',''))
     if path=='/auth/verify-otp':
         ch=s['challenges'].get(body.challenge_id)
-        if not ch or ch['expires']<time.time() or ch['attempts']>=5:
+        if not ch or ch['expires']<=time.time() or ch['attempts']>=5 or ch.get('reset_verified'):
             return JSONResponse({'detail':'Verification expired or locked. Start sign-in again.'},status_code=400)
         digest=hmac.new(SECRET.encode(),(body.challenge_id+body.otp).encode(),'sha256').hexdigest()
         ch['attempts']+=1
         if not hmac.compare_digest(digest,ch['code_hash']):
             return JSONResponse({'detail':'Invalid verification code.'},status_code=400)
         if ch['purpose']=='reset':
+            proof = secrets.token_urlsafe(32)
+            ch['reset_proof_hash'] = hashlib.sha256(proof.encode()).hexdigest()
             ch['reset_verified']=True
-            return {'reset_token':body.challenge_id,'message':'Code verified. Set your new password.'}
+            del ch['code_hash']
+            return {'reset_token':body.challenge_id + '.' + proof,'message':'Code verified. Set your new password.'}
         u=ch['pending'] or s['users'].get(ch['portal']+':'+ch['email'])
         require(u is not None,'Account not found.',404)
         if ch['purpose']=='signup':
@@ -610,11 +621,17 @@ def dispatch(s, request, body=None):
         if u:return issue_challenge(s,u,'reset')
         return {'message':'If this account exists, a verification code has been sent.','challenge_id':uid('CH'),'otp_required':True}
     if path in {'/portal/auth/password-reset/confirm','/auth/password-reset/confirm'}:
-        ch=s['challenges'].get(data.get('reset_token',''))
-        require(ch and ch['purpose']=='reset' and ch.get('reset_verified') and ch['expires']>time.time(),'Invalid or expired password reset.',400)
+        token = data.get('reset_token')
+        invalid_reset = 'Invalid or expired password reset.'
+        require(isinstance(token, str) and 0 < len(token) <= 160 and token.isascii(), invalid_reset)
+        challenge_id, separator, proof = token.partition('.')
+        ch = s['challenges'].get(challenge_id)
+        require(separator and proof and ch and ch['purpose']=='reset' and ch.get('reset_verified')
+                and ch['expires']>time.time() and hmac.compare_digest(
+                    ch.get('reset_proof_hash', ''), hashlib.sha256(proof.encode()).hexdigest()), invalid_reset)
         valid_password(data.get('new_password',''));u=s['users'][ch['portal']+':'+ch['email']]
         u['password_hash']=password_hash(data['new_password']);u['token_version']+=1
-        del s['challenges'][data['reset_token']]
+        del s['challenges'][challenge_id]
         audit(s,u['email'],'PASSWORD_RESET');return {'message':'Password changed. Sign in again.'}
     if path in {'/admin/rbac/verify','/driver/verify-key','/portal/auth/sso/initiate'}:
         raise HTTPException(503 if 'sso' in path else 410,'Use email/password and OTP. External SSO requires a configured identity provider.' if 'sso' in path else 'Shared key login is disabled. Use email/password and OTP.')
@@ -1082,6 +1099,10 @@ def install(app, legacy):
 
     def register(path,methods,model=None,tags=None):
         def endpoint(request,body=None):
+            if path in {'/', '/config'} and request.method=='GET':
+                # Public deployment metadata does not depend on customers or orders.
+                # The shared IP limit and response security headers still apply.
+                return dispatch({}, request, body)
             if path in {'/auth/signup','/auth/signin','/auth/request-otp','/auth/password-reset/request','/portal/auth/password-reset/request'}:
                 return challenge_request(request,body)
             context=read_transaction if request.method in {'GET','HEAD'} else transaction
@@ -1271,7 +1292,7 @@ def install(app, legacy):
 
     from workforce import install_workforce
     install_workforce(app)
-    app.version='13.0.0'
+    app.version='13.0.1'
     from starlette.middleware.gzip import GZipMiddleware
     class APICompression:
         def __init__(self, app):
