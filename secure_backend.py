@@ -119,6 +119,28 @@ def initial_state():
 _pool = None
 _pool_lock = threading.Lock()
 
+def postgres_root_certificate(dsn):
+    """Choose a trust store once when opening the production connection pool."""
+    configured = os.getenv('PGSSLROOTCERT')
+    if configured:
+        return configured
+
+    from psycopg import ProgrammingError
+    from psycopg.conninfo import conninfo_to_dict
+    try:
+        options = conninfo_to_dict(dsn)
+    except ProgrammingError:
+        raise RuntimeError('Invalid PostgreSQL connection settings. Check DATABASE_URL.') from None
+    if options.get('sslrootcert'):
+        return options['sslrootcert']
+
+    hosts = (options.get('host') or os.getenv('PGHOST', '')).split(',')
+    pooler_host = r'[a-z0-9-]+\.pooler\.supabase\.com\.?'
+    if all(re.fullmatch(pooler_host, host.strip().lower()) for host in hosts):
+        return str(ROOT / 'certs' / 'supabase-production-roots.pem')
+    return 'system'
+
+
 def postgres_connect():
     """Reuse verified TLS connections across short transactions on free hosting."""
     global _pool
@@ -127,7 +149,7 @@ def postgres_connect():
             if _pool is None:
                 from psycopg_pool import ConnectionPool
                 kwargs = dict(connect_timeout=10, sslmode='verify-full' if PRODUCTION else 'prefer',
-                    sslrootcert=(os.getenv('PGSSLROOTCERT') or 'system') if PRODUCTION else None,
+                    sslrootcert=postgres_root_certificate(DATABASE_URL) if PRODUCTION else None,
                     prepare_threshold=None)
                 _pool = ConnectionPool(DATABASE_URL, min_size=0, max_size=4, timeout=10,
                     kwargs=kwargs, check=ConnectionPool.check_connection, open=True)
