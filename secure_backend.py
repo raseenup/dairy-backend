@@ -146,11 +146,23 @@ def postgres_transaction():
 
 
 def postgres_rate_limit(bucket,limit,seconds):
+    current=time.time()
     with postgres_connect() as conn:
         with conn.cursor() as cur:
-            cur.execute('DELETE FROM fmv_secure.rate_limits WHERE until_epoch < %s',(time.time(),))
-            cur.execute('INSERT INTO fmv_secure.rate_limits (bucket,until_epoch,hits) VALUES (%s,%s,1) ON CONFLICT (bucket) DO UPDATE SET hits=fmv_secure.rate_limits.hits+1 RETURNING hits', (bucket,time.time()+seconds))
+            # One atomic key lookup/update instead of scanning expired buckets
+            # before every live sync. Expired windows reset under the row lock.
+            cur.execute('''INSERT INTO fmv_secure.rate_limits (bucket,until_epoch,hits) VALUES (%s,%s,1)
+                ON CONFLICT (bucket) DO UPDATE SET
+                hits=CASE WHEN fmv_secure.rate_limits.until_epoch<=%s THEN 1
+                    ELSE LEAST(fmv_secure.rate_limits.hits+1,%s) END,
+                until_epoch=CASE WHEN fmv_secure.rate_limits.until_epoch<=%s THEN EXCLUDED.until_epoch
+                    ELSE fmv_secure.rate_limits.until_epoch END RETURNING hits''',
+                (bucket,current+seconds,current,limit+1,current))
             hits=cur.fetchone()[0]
+            if secrets.randbelow(256)==0:
+                cur.execute('''DELETE FROM fmv_secure.rate_limits WHERE until_epoch<%s AND bucket IN
+                    (SELECT bucket FROM fmv_secure.rate_limits WHERE until_epoch<%s
+                     ORDER BY until_epoch LIMIT 128)''',(current,current))
     require(hits<=limit,'Too many attempts. Please try again later.',429)
 
 
@@ -252,12 +264,15 @@ def rate_limit(bucket, limit, seconds):
         c.execute('CREATE TABLE IF NOT EXISTS rate_limits (bucket TEXT PRIMARY KEY, until REAL NOT NULL, hits INTEGER NOT NULL)')
         c.execute('BEGIN IMMEDIATE')
         t = time.time()
-        c.execute('DELETE FROM rate_limits WHERE until < ?', (t,))
-        row = c.execute('SELECT until,hits FROM rate_limits WHERE bucket=?', (bucket,)).fetchone()
-        until, hits = row if row else (t+seconds,0)
-        c.execute('INSERT OR REPLACE INTO rate_limits VALUES (?,?,?)',(bucket,until,hits+1))
+        hits=c.execute('''INSERT INTO rate_limits (bucket,until,hits) VALUES (?,?,1)
+            ON CONFLICT (bucket) DO UPDATE SET
+            hits=CASE WHEN rate_limits.until<=? THEN 1 ELSE min(rate_limits.hits+1,?) END,
+            until=CASE WHEN rate_limits.until<=? THEN excluded.until ELSE rate_limits.until END
+            RETURNING hits''',(bucket,t+seconds,t,limit+1,t)).fetchone()[0]
+        if secrets.randbelow(256)==0:
+            c.execute('DELETE FROM rate_limits WHERE bucket IN (SELECT bucket FROM rate_limits WHERE until<? ORDER BY until LIMIT 128)',(t,))
         c.commit()
-        require(hits < limit, 'Too many attempts. Please try again later.', 429)
+        require(hits <= limit, 'Too many attempts. Please try again later.', 429)
     finally: c.close()
 
 
@@ -1152,7 +1167,7 @@ def install(app, legacy):
                 return FileResponse(target)
             return serve
         app.add_api_route(url+'/',file_handler(ROOT.parent/folder/'index.html'),methods=['GET'],include_in_schema=False)
-        for filename in ['index.html','config.js','portal-core.js','portal.css','tailwind.css','design-system.css','portal-theme.css','app.js','admin.js','driver.js','experience.js','experience.css','operations.js','operations.css','cash.js','cash.css','workspace.js','workspace.css','workforce.js','workforce.css','orders.js','orders.css']:
+        for filename in ['index.html','config.js','portal-core.js','portal.css','tailwind.css','design-system.css','portal-theme.css','polish.css','app.js','admin.js','driver.js','experience.js','experience.css','operations.js','operations.css','cash.js','cash.css','workspace.js','workspace.css','workforce.js','workforce.css','orders.js','orders.css']:
             target=ROOT.parent/folder/filename
             if target.exists():
                 app.add_api_route(url+'/'+filename,file_handler(target),methods=['GET'],include_in_schema=False)
@@ -1256,6 +1271,7 @@ def install(app, legacy):
 
     from workforce import install_workforce
     install_workforce(app)
+    app.version='13.0.0'
     from starlette.middleware.gzip import GZipMiddleware
     class APICompression:
         def __init__(self, app):
