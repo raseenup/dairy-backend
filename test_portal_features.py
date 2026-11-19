@@ -26,7 +26,8 @@ def test_non_payment_amounts_are_rejected(bad):
     assert error.value.status_code == 422
 
 
-def test_published_policy_search_uses_only_matching_sources():
+def test_published_policy_search_uses_only_matching_sources(monkeypatch):
+    monkeypatch.delenv('OPENAI_API_KEY',raising=False)
     entries = [
         {"id":"page:refund","title":"Refund Policy","body":"Approved requests are reviewed by the finance team."},
         {"id":"page:about","title":"Our Story","body":"We supply fresh milk and curd."},
