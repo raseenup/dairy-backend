@@ -88,7 +88,7 @@ def valid_password(password):
     # Enforce new passwords at sign-up and reset, not legacy-account sign-in.
     require(isinstance(password, str) and 10 <= len(password) <= 128
             and re.search('[A-Z]', password) and re.search('[a-z]', password)
-            and re.search('[0-9]', password) and re.search(r'[^A-Za-z0-9\\s]', password),
+            and re.search('[0-9]', password) and re.search(r'[^A-Za-z0-9\s]', password),
             'Use 10–128 characters with at least one uppercase letter, one lowercase letter, one digit and one special character.', 422)
 
 def phone_india(phone):
