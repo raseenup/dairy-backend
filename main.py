@@ -22,6 +22,7 @@ app = FastAPI(
 ALLOWED_ORIGINS = [
     "https://firstmilkventure.com",
     "https://www.firstmilkventure.com",
+    "https://customer.firstmilkventure.com",
     "https://admin.firstmilkventure.com",
     "https://delivery.firstmilkventure.com",
     "https://backend.firstmilkventure.com",
