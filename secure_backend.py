@@ -981,7 +981,6 @@ def customer_portal_dispatch(s,u,r,d):
         # Preserve the original customer chatbot screen and update its source
         # automatically when staff publish approved company knowledge.
         from portal_features import assistant_answer, company_info
-        rate_limit('assistant:'+u['id'],30,60)
         return assistant_answer(clean_text(d.get('message',''),1200),company_info(s))
     if p=='/portal/forum':
         if m=='GET':return {'posts':list(s['forum'].values())}
