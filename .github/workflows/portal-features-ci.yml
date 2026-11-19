@@ -1,0 +1,23 @@
+name: First Milk feature validation
+on:
+  pull_request:
+    paths:
+      - '**/*.py'
+      - 'requirements.txt'
+      - '.github/workflows/portal-features-ci.yml'
+  workflow_dispatch:
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install runtime and testing dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+      - name: Compile all Python modules
+        run: python -m compileall -q .
+      - name: Run isolated new feature and security regressions
+        run: python -m pytest -q test_portal_features.py test_portal_v13.py test_secure_flows.py
