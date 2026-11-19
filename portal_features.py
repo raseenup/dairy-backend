@@ -307,11 +307,11 @@ def install_portal_features(app):
     @app.post('/customer/payment/upi',tags=['Customer UPI'])
     def create_upi_intent(request:Request,body:TransferRequest):
         amount=clean_amount(body.amount)
+        c.rate_limit('upi-intent:'+str(request.client.host if request.client else 'unknown'),15,60)
         with c.transaction() as state:
             user,_=c.actor(state,request,'customer')
             cfg=upi_view(state)
             c.require(cfg['enabled'],'Merchant UPI payments are not enabled.',503)
-            c.rate_limit('upi-intent:'+user['id'],15,60)
             ident=c.uid('UPI')
             payment={'id':ident,'owner':user['email'],'amount':str(amount),
                      'note':c.clean_text(body.note,120),'status':'initiated',
