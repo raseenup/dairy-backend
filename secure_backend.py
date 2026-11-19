@@ -978,7 +978,11 @@ def customer_portal_dispatch(s,u,r,d):
             ticket=dict(id=uid('TKT'),owner=u['email'],customer_email=u['email'],category='support',subject='Chat escalation',summary='Chat escalation',description=clean_text(d['message']),status='open',history=[],created_at=now())
             s['tickets'][ticket['id']]=ticket;audit(s,u['email'],'CHAT_ESCALATED',ticket['id'])
             return {'reply':'A support ticket was created: '+ticket['id']+'. An agent has not yet joined.','ticket':ticket}
-        return {'reply':'Help assistant: check Orders for delivery status, Billing for invoices, or create a support ticket for account-specific help. Live AI is not configured.','mode':'help'}
+        # Preserve the original customer chatbot screen and update its source
+        # automatically when staff publish approved company knowledge.
+        from portal_features import assistant_answer, company_info
+        rate_limit('assistant:'+u['id'],30,60)
+        return assistant_answer(clean_text(d.get('message',''),1200),company_info(s))
     if p=='/portal/forum':
         if m=='GET':return {'posts':list(s['forum'].values())}
         item=dict(d,id=uid('FORUM'),owner=u['email'],votes=0,created_at=now());require(item['title'].strip() and item['body'].strip(),'Title and message are required.')
