@@ -85,8 +85,11 @@ def password_ok(password, encoded):
 DUMMY_HASH = password_hash(secrets.token_urlsafe(24))
 
 def valid_password(password):
-    require(12 <= len(password) <= 128 and re.search('[A-Za-z]', password) and re.search('[0-9]', password),
-            'Use 12–128 characters, including letters and numbers.', 422)
+    # Enforce new passwords at sign-up and reset, not legacy-account sign-in.
+    require(isinstance(password, str) and 10 <= len(password) <= 128
+            and re.search('[A-Z]', password) and re.search('[a-z]', password)
+            and re.search('[0-9]', password) and re.search(r'[^A-Za-z0-9\\s]', password),
+            'Use 10–128 characters with at least one uppercase letter, one lowercase letter, one digit and one special character.', 422)
 
 def phone_india(phone):
     value = re.sub(r'[\s()-]', '', phone)
@@ -337,7 +340,7 @@ def send_code(email, code, purpose='signin', portal='customer', name='', promoti
 class Signup(BaseModel):
     email: EmailStr
     phone: str
-    password: str = Field(min_length=12,max_length=128)
+    password: str = Field(min_length=10,max_length=128)
     full_name: str = Field(min_length=1,max_length=150)
     address: str = Field(min_length=1,max_length=1000)
     portal: Literal['customer','admin','driver'] = 'customer'
