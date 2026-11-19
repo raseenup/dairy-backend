@@ -203,6 +203,13 @@ def install_portal_features(app):
         c.rate_limit('assistant:'+user['id'],30,60)
         return assistant_answer(c.clean_text(body.message,1200),docs)
 
+    @app.post('/public/assistant/chat',tags=['Public published-information chatbot'])
+    def public_chat(request:Request,body:AssistantQuestion):
+        c.rate_limit('public-assistant:'+str(request.client.host if request.client else 'unknown'),12,60)
+        with c.read_transaction() as state:
+            docs=company_info(state)
+        return assistant_answer(c.clean_text(body.message,1200),docs)
+
     @app.get('/admin/assistant/knowledge',tags=['Assistant editor'])
     def read_knowledge(request:Request):
         with c.read_transaction() as state:
@@ -239,7 +246,8 @@ def install_portal_features(app):
     def admin_website(request:Request):
         with c.read_transaction() as state:
             editing_actor(state,request)
-            return site_view(state)
+            return {**site_view(state), 'media_id':state.get('website_design',{}).get('media_id',''),
+                    'blocks':state.get('website_design',{}).get('blocks',[])}
 
     @app.patch('/admin/website',tags=['Website editor'])
     def update_website(request:Request,body:SiteBody):
