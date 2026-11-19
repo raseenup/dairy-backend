@@ -1314,7 +1314,11 @@ def install(app, legacy):
 
     from workforce import install_workforce
     install_workforce(app)
-    app.version='13.0.1'
+
+    # Additive customer/staff tools. Existing API schemas and routes stay intact.
+    from portal_features import install_portal_features
+    install_portal_features(app)
+    app.version='13.1.0'
     from starlette.middleware.gzip import GZipMiddleware
     class APICompression:
         def __init__(self, app):
