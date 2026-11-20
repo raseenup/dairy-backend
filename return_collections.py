@@ -49,6 +49,10 @@ class CollectProof(StrictModel):
     pickup_pin: str = Field(pattern=r'^\d{6}$')
     condition: Literal['sealed','opened','damaged','other']
     note: str = Field(default='',max_length=700)
+    # Default protects existing older driver clients: unconfirmed items are
+    # never eligible for early refunds.
+    additional_damage: Literal['none','observed','uncertain','unconfirmed'] = 'unconfirmed'
+    attestation_confirmed: bool = False
 
 class WarehouseReceipt(StrictModel):
     condition: Literal['sealed','opened','damaged','other']
@@ -83,7 +87,7 @@ def customer_view(state, claim):
     if not record:return None
     result={k:record.get(k) for k in (
         'id','status','scheduled_date','driver_name','assigned_at',
-        'collected_at','received_at','condition','disposition')}
+        'collected_at','received_at','condition','disposition','additional_damage')}
     result['instructions']=settings(state)['instructions']
     # Never show the pickup code after collection, cancellation or receipt.
     if record['status']=='scheduled':
@@ -219,6 +223,7 @@ def install_return_collections(app):
                 driver_name=driver.get('name','Driver'),status='scheduled',
                 scheduled_date=body.scheduled_date.isoformat(),
                 note=c.clean_text(body.note,700),pin_nonce=secrets.token_hex(16),
+                quality_required=True,
                 pin_attempts=0,version=current_version+1,
                 assigned_by=user['email'],assigned_at=c.now())
             state['return_collections'][claim_id]=record
@@ -291,6 +296,10 @@ def install_return_collections(app):
                       'This return collection is scheduled for a future date.',409)
             c.require(record['pin_attempts']<settings(state)['max_pin_attempts'],
                       'Pickup PIN locked. Ask the manager to reassign and issue a new code.',423)
+            c.require(body.additional_damage!='none' or body.attestation_confirmed,
+                      'Confirm your no-additional-damage statement before collecting.',422)
+            c.require(body.additional_damage not in {'observed','uncertain'} or len(body.note.strip())>=12,
+                      'Describe any observed or uncertain additional damage.',422)
             if not hmac.compare_digest(derive_pin(record),body.pickup_pin):
                 record['pin_attempts']+=1
                 c.audit(state,user['email'],'RETURN_PICKUP_CODE_FAILED',claim_id)
@@ -298,6 +307,8 @@ def install_return_collections(app):
             else:
                 record.update(status='collected',collected_at=c.now(),
                     condition=body.condition,driver_note=c.clean_text(body.note,700),
+                    additional_damage=body.additional_damage,
+                    driver_attested_at=c.now() if body.attestation_confirmed else None,
                     collection_verified_by=user['email'],version=record['version']+1)
                 # Expire the old code immediately; nothing financial is changed.
                 record['pin_nonce']=secrets.token_hex(16)
@@ -317,6 +328,10 @@ def install_return_collections(app):
             record=state['return_collections'].get(claim_id)
             c.require(record and record['status']=='collected',
                       'A driver-verified pickup is required before warehouse receipt.',409)
+            # New pickups require a structured quality inspection, not a legacy
+            # one-click receipt that might bypass damage escalation.
+            c.require(not record.get('quality_required'),
+                      'Use the Yard Quality inspection report for this pickup.',409)
             claim=state['rma'].get(claim_id)
             c.require(claim and claim['status']=='approved',
                       'This return is not awaiting warehouse receipt.',409)
