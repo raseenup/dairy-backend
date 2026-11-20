@@ -221,12 +221,14 @@ def install_return_quality(app):
                       'Return status changed; refresh and review.',409)
             c.require(record['status'] in {'collected','received','quality_hold'},
                       'Verified collection must occur before refund authorization.',409)
-            c.require(record.get('additional_damage')=='none' and record.get('driver_attested_at'),
-                      'Driver must confirm no additional damage at pickup.',409)
-            c.require(money(body.amount)<=money(claim['amount']),
-                      'Refund cannot exceed the claim amount.',422)
             report=state['return_yard_reports'].get(claim_id)
             case=state['return_damage_cases'].get(claim_id)
+            c.require((record.get('additional_damage')=='none' and record.get('driver_attested_at'))
+                      or (report and report['finding']=='good')
+                      or (case and case.get('customer_refund_allowed') is True),
+                      'Requires driver attestation, good yard report or reviewed exception.',409)
+            c.require(money(body.amount)<=money(claim['amount']),
+                      'Refund cannot exceed the claim amount.',422)
             c.require(not report or report['finding']=='good' or (case and case.get('customer_refund_allowed')),
                       'Yard discrepancy requires an independent refund-eligibility decision.',409)
             c.require(claim['status'] in {'approved','received'},
@@ -328,8 +330,12 @@ def install_return_quality(app):
             available=money(workforce.wallet(state,case['driver_id'])['available_to_claim'])
             # Conservative single-period cap. More restrictive applicable labour
             # limits must be reviewed by HR; no negative earnings or retroactive debit.
-            c.require(cents<=available//2 and cents>0,
-                      'Recovery cannot exceed half of the current available earnings.',409)
+            total=workforce.wallet(state,case['driver_id'])
+            total_gross=money(total['gross_earnings'])
+            already_deducted=money(total['deductions'])
+            c.require(cents>0 and cents<=available//2
+                      and cents+already_deducted<=total_gross//2,
+                      'Recovery exceeds conservative earnings deduction safeguards.',409)
             driver=state['drivers'].get(case['driver_id'],{})
             c.require(driver and not driver.get('deleted'),
                       'Driver receivable is unavailable.',409)
