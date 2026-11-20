@@ -115,7 +115,7 @@ def initial_state():
         dict(id='prod-4',name='Farm Fresh Milk',description='Daily fresh milk from Kerala farms.',price=60.0,unit='1 Liter',stock_quantity=250)]
     return dict(users={}, challenges={}, sessions={}, products={p['id']:dict(p,currency='INR',min_stock_threshold=20,version=1,tax_rate=0) for p in products},
                 orders={}, subscriptions={}, drivers={}, shifts={}, expenses={}, sos={}, tickets={}, forum={}, votes={},
-                team={}, profiles={}, quotes={}, rma={}, return_collections={}, return_collection_settings={}, invoices={}, documents={}, uploads={}, notifications={}, surveys={},
+                team={}, profiles={}, quotes={}, rma={}, return_collections={}, return_collection_settings={}, return_yard_reports={}, return_damage_cases={}, return_refund_authorizations={}, invoices={}, documents={}, uploads={}, notifications={}, surveys={},
                 credit={}, branding={}, audit=[], idempotency={}, events={}, invites={}, revision=0,
                 tax={'gstin':'','vat_rate':0,'zatca_tin':'','zatca_mode':'india_gst','country':'India','state':'Kerala'})
 
@@ -1328,7 +1328,9 @@ def install(app, legacy):
     # Secure returns collection integrates with, but does not replace, refunds.
     from return_collections import install_return_collections
     install_return_collections(app)
-    app.version='13.2.0'
+    from return_quality import install_return_quality
+    install_return_quality(app)
+    app.version='13.3.0'
     from starlette.middleware.gzip import GZipMiddleware
     class APICompression:
         def __init__(self, app):

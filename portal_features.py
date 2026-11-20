@@ -406,14 +406,22 @@ def install_portal_features(app):
     @app.post('/admin/returns/{return_id}/refund-record',tags=['Return processing'])
     def record_refund(return_id:str,request:Request,body:RefundConfirmation):
         with c.transaction() as state:
-            user,_=c.actor(state,request,'admin','finance')
+            from return_quality import finance_user
+            user=finance_user(state,request)
             item=state['rma'].get(return_id)
             c.require(item and item['status'] in {'approved','received'},
                       'Approve the claim before recording a refund.',409)
-            if item.get('claim_type')=='return' :
-                pickup=state.get('return_collections',{}).get(return_id)
-                c.require(item['status']=='received' and pickup and pickup.get('status')=='received',
-                          'A physical return requires driver pickup and warehouse receipt before refund review.',409)
+            if item.get('claim_type')=='return':
+                collection=state.get('return_collections',{}).get(return_id)
+                c.require(collection,'This physical return has no verified collection.',409)
+                if collection.get('quality_required'):
+                    # Separate human approval after driver-confirmed undamaged pickup;
+                    # later yard discrepancies require an additional quality decision.
+                    from return_quality import refund_allowed
+                    refund_allowed(state,item,collection,c.money(body.amount))
+                else:
+                    c.require(item['status']=='received' and collection.get('status')=='received',
+                              'Legacy returns require warehouse receipt before refund review.',409)
             amount=clean_amount(body.amount)
             c.require(amount<=Decimal(str(item['amount'])),'Refund exceeds this order.',422)
             order=state['orders'].get(item['order_id'])
