@@ -1328,7 +1328,9 @@ def install(app, legacy):
     # Secure returns collection integrates with, but does not replace, refunds.
     from return_collections import install_return_collections
     install_return_collections(app)
-    app.version='13.2.0'
+    from return_quality import install_return_quality
+    install_return_quality(app)
+    app.version='13.3.0'
     from starlette.middleware.gzip import GZipMiddleware
     class APICompression:
         def __init__(self, app):
