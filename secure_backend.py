@@ -1324,7 +1324,11 @@ def install(app, legacy):
     # Additive customer/staff tools. Existing API schemas and routes stay intact.
     from portal_features import install_portal_features
     install_portal_features(app)
-    app.version='13.1.0'
+
+    # Secure returns collection integrates with, but does not replace, refunds.
+    from return_collections import install_return_collections
+    install_return_collections(app)
+    app.version='13.2.0'
     from starlette.middleware.gzip import GZipMiddleware
     class APICompression:
         def __init__(self, app):
