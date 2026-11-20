@@ -8,7 +8,7 @@ from __future__ import annotations
 import hmac
 import hashlib
 import secrets
-from datetime import date, timedelta
+from datetime import date
 from typing import Literal
 
 from fastapi import Request, HTTPException
@@ -186,7 +186,7 @@ def install_return_collections(app):
                       and not driver.get('deleted')
                       and state['users'].get('driver:'+driver['email'],{}).get('approved'),
                       'Choose an approved, active driver.',422)
-            delta=(body.scheduled_date-date.today()).days
+            delta=(body.scheduled_date-date.fromisoformat(c.today())).days
             c.require(0<=delta<=cfg['pickup_window_days'],
                       'Schedule a pickup within the configured number of days.',422)
             collection=state['return_collections'].get(claim_id)
