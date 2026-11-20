@@ -406,7 +406,8 @@ def install_portal_features(app):
     @app.post('/admin/returns/{return_id}/refund-record',tags=['Return processing'])
     def record_refund(return_id:str,request:Request,body:RefundConfirmation):
         with c.transaction() as state:
-            user,_=c.actor(state,request,'admin','finance')
+            from return_quality import finance_user
+            user=finance_user(state,request)
             item=state['rma'].get(return_id)
             c.require(item and item['status'] in {'approved','received'},
                       'Approve the claim before recording a refund.',409)
