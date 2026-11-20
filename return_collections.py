@@ -287,6 +287,8 @@ def install_return_collections(app):
             c.require(record and record.get('driver_id')==user['id'],
                       'Assigned collection not found.',404)
             c.require(record['status']=='scheduled','This pickup is not pending collection.',409)
+            c.require(date.fromisoformat(record['scheduled_date'])<=date.fromisoformat(c.today()),
+                      'This return collection is scheduled for a future date.',409)
             c.require(record['pin_attempts']<settings(state)['max_pin_attempts'],
                       'Pickup PIN locked. Ask the manager to reassign and issue a new code.',423)
             if not hmac.compare_digest(derive_pin(record),body.pickup_pin):
