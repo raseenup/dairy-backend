@@ -40,6 +40,16 @@ def assign(manager,claim,driver_id,version=0):
                               'expected_version':version,'note':'Collect at front door.'})
 
 
+def yard(manager,claim,condition='sealed'):
+    with sec.read_transaction(maintain=False) as state:
+        version=state['return_collections'][claim['id']]['version']
+    return client.post('/admin/return-quality/'+claim['id']+'/yard-report',
+        headers=manager,json={'finding':'good','condition':condition,
+            'disposition':'quarantine',
+            'report':'Product received intact at yard. Condition checked.',
+            'expected_version':version})
+
+
 def test_return_collection_rejects_unauthorized_roles_and_allows_designated_manager():
     customer,_=account()
     staff,_=account('support@example.com','admin','9876543211',role='customer_support')
@@ -110,10 +120,12 @@ def test_assigned_pickup_protects_customer_code_driver_identity_and_warehouse():
     assert client.post('/driver/return-collections/'+claim['id']+'/collect',
         headers=driver,json={'pickup_pin':pin,'condition':'sealed'}).status_code==409
     assert client.get('/customer/return-collections',headers=customer).json()['pickups'][0].get('pickup_pin') is None
-    receipt=client.post('/admin/return-collections/'+claim['id']+'/receive',headers=manager,json={
-        'condition':'sealed','disposition':'quarantine','note':'Quarantined for inspection'})
+    assert client.post('/admin/return-collections/'+claim['id']+'/receive',headers=manager,
+        json={'condition':'sealed','disposition':'quarantine'}).status_code==409
+    receipt=yard(manager,claim)
     assert receipt.status_code==200,receipt.text
-    assert receipt.json()['claim']['status']=='received'
+    with sec.read_transaction(maintain=False) as state:
+        assert state['rma'][claim['id']]['status']=='received'
     with sec.read_transaction(maintain=False) as state:
         assert state['products']['prod-4']['stock_quantity']==248
 
@@ -159,8 +171,14 @@ def test_refund_cannot_bypass_return_item_pickup():
     assert client.post('/driver/return-collections/'+claim['id']+'/collect',
         headers=driver,json={'pickup_pin':pin,'condition':'opened'}).status_code==200
     assert client.post(url,headers=finance,json=body).status_code==409
-    assert client.post('/admin/return-collections/'+claim['id']+'/receive',
-        headers=manager,json={'condition':'opened','disposition':'dispose'}).status_code==200
+    assert yard(manager,claim,'opened').status_code==200
+    assert client.post(url,headers=finance,json=body).status_code==409
+    with sec.read_transaction(maintain=False) as state:
+        version=state['return_collections'][claim['id']]['version']
+    auth=client.post('/admin/return-quality/'+claim['id']+'/refund-authorization',
+        headers=finance,json={'amount':'60.00','rationale':'Item received and checked at yard.',
+                              'expected_version':version})
+    assert auth.status_code==200,auth.text
     result=client.post(url,headers=finance,json=body)
     assert result.status_code==200,result.text
     assert result.json()['claim']['status']=='manual_refund_reported'
