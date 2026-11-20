@@ -162,6 +162,13 @@ def install_return_collections(app):
             claim=state['rma'].get(claim_id)
             c.require(claim,'Return request not found.',404)
             c.require(claim['status']=='under_review','This request has already been reviewed.',409)
+            if body.status=='approved' and claim.get('claim_type')=='return':
+                order=state['orders'].get(claim.get('order_id'))
+                c.require(order and order.get('status')=='Delivered',
+                          'Physical items may be returned only after a confirmed delivery.',409)
+                c.require(not any(other['id']!=claim_id and other.get('order_id')==claim['order_id']
+                  and other.get('claim_type')=='return' and other.get('status') in {'approved','received','refunded','manual_refund_reported'}
+                  for other in state['rma'].values()),'An approved return already exists for this order.',409)
             claim['status']=body.status
             claim['reviewed_at']=c.now()
             claim['reviewed_by']=user['email']
@@ -181,6 +188,9 @@ def install_return_collections(app):
             c.require(claim and claim.get('claim_type')=='return',
                       'Only physical return requests can be assigned for collection.',404)
             c.require(claim['status']=='approved','Approve the return before assigning a pickup.',409)
+            order=state['orders'].get(claim.get('order_id'))
+            c.require(order and order.get('status')=='Delivered',
+                      'Cannot collect an order that is not delivered.',409)
             driver=state['drivers'].get(body.driver_id)
             c.require(driver and driver.get('approved') and driver.get('email')
                       and not driver.get('deleted')
