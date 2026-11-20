@@ -393,7 +393,7 @@ def install_portal_features(app):
                       'Invalid return transition.',409)
             # A finance reviewer cannot bypass verified driver collection and
             # warehouse receipt for physical items through the legacy endpoint.
-            if body.status=='received' and item.get('claim_type')=='return' and state.get('return_collection_settings',{}).get('enabled',True):
+            if body.status=='received' and item.get('claim_type')=='return' :
                 pickup=state.get('return_collections',{}).get(return_id)
                 c.require(pickup and pickup.get('status')=='received',
                           'Warehouse receipt must be verified through Return Collection.',409)
@@ -410,7 +410,7 @@ def install_portal_features(app):
             item=state['rma'].get(return_id)
             c.require(item and item['status'] in {'approved','received'},
                       'Approve the claim before recording a refund.',409)
-            if item.get('claim_type')=='return' and state.get('return_collection_settings',{}).get('enabled',True):
+            if item.get('claim_type')=='return' :
                 pickup=state.get('return_collections',{}).get(return_id)
                 c.require(item['status']=='received' and pickup and pickup.get('status')=='received',
                           'A physical return requires driver pickup and warehouse receipt before refund review.',409)
