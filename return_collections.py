@@ -89,6 +89,12 @@ def customer_view(state, claim):
         'id','status','scheduled_date','driver_name','assigned_at',
         'collected_at','received_at','condition','disposition','additional_damage')}
     result['instructions']=settings(state)['instructions']
+    # Only neutral customer-facing outcomes. Allegations, evidence and driver
+    # disciplinary records must never appear in customer responses.
+    report=state.get('return_yard_reports',{}).get(claim['id'])
+    result['yard_result']=report.get('finding') if report else None
+    authorization=state.get('return_refund_authorizations',{}).get(claim['id'])
+    result['refund_eligibility']='approved_for_processing' if authorization else 'awaiting_review'
     # Never show the pickup code after collection, cancellation or receipt.
     if record['status']=='scheduled':
         result['pickup_pin']=derive_pin(record)
