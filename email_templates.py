@@ -333,6 +333,7 @@ def build_email(
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="{_CREAM}" style="width:100%;background-color:{_CREAM};border-collapse:collapse;"><tr><td class="outer-pad" align="center" style="padding:32px 12px;">
 <table class="email-shell" role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px;max-width:100%;border-collapse:collapse;">
 <tr><td bgcolor="{_NAVY}" style="padding:24px 30px;background-color:{_NAVY};border-radius:16px 16px 0 0;border-bottom:4px solid {_GOLD};">
+<img src="https://customer.firstmilkventure.com/assets/brand/fmv-icon.png" width="64" height="64" alt="First Milk Venture official logo" style="display:block;width:64px;height:64px;max-width:64px;margin:0 0 12px;padding:4px;background-color:#FFFFFF;border-radius:12px;outline:0;">
 <p style="margin:0;font:700 22px/28px Arial,sans-serif;letter-spacing:1px;color:#FFFFFF;">FIRST MILK<span style="color:{_GOLD};">.</span></p><p style="margin:5px 0 0;font:11px/18px Arial,sans-serif;letter-spacing:2px;color:#D5E6DF;">VENTURE &nbsp; / &nbsp; FRESH EVERYDAY</p></td></tr>
 <tr><td class="content-pad" bgcolor="#FFFFFF" style="padding:34px 32px;background-color:#FFFFFF;">
 <p style="margin:0 0 12px;font:700 11px/18px Arial,sans-serif;letter-spacing:1.5px;color:{_EMERALD};">{_escape(content["eyebrow"])}</p>
