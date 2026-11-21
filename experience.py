@@ -236,7 +236,7 @@ class Campaign(BaseModel):
     title: str = Field(min_length=1,max_length=120)
     description: str = Field(default='',max_length=1500)
     kind: Literal['banner','offer','menu','post'] = 'banner'
-    placement: Literal['home','home_location','offers','email'] = 'home'
+    placement: Literal['home','home_location','offers','email','driver'] = 'home'
     status: Literal['draft','published'] = 'published'
     media_id: str = Field(default='',max_length=100)
     alt_text: str = Field(default='',max_length=200)
@@ -305,7 +305,11 @@ def campaign_record(state, body, actor_email, old=None):
     c.require(not data['ends_epoch'] or not data['starts_epoch'] or data['ends_epoch'] > data['starts_epoch'],
               'End time must follow start time.',422)
     if data['media_id']:
-        c.require(data['media_id'] in state.setdefault('campaign_media',{}),'Upload not found.',404)
+        asset=state.setdefault('campaign_media',{}).get(data['media_id'])
+        c.require(asset,'Upload not found.',404)
+        if data['placement']=='email':
+            c.require(asset.get('mime_type')!='video/mp4',
+                      'Email banners require an image, not a video.',422)
     return dict(data,id=old['id'] if old else c.uid('AD'),version=(old['version']+1) if old else 1,
                 created_at=old['created_at'] if old else c.now(),updated_at=c.now(),updated_by=actor_email)
 
@@ -313,7 +317,8 @@ def campaign_record(state, body, actor_email, old=None):
 def public_campaign(state, item):
     asset = state.get('campaign_media',{}).get(item['media_id'],{})
     return {k:v for k,v in dict(item,media_url='/media/campaign/'+item['media_id'] if asset else '',
-                               mime_type=asset.get('mime_type','')).items() if k not in {'updated_by'}}
+                               mime_type=asset.get('mime_type',''),
+                               media_size=int(asset.get('size') or 0)).items() if k not in {'updated_by'}}
 
 
 def install_experience(app):
