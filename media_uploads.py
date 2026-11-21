@@ -22,7 +22,7 @@ import secure_backend as c
 
 MAX_FILE_BYTES = 50_000_000
 PART_BYTES = 2_000_000
-MAX_MEDIA_TOTAL = 250_000_000
+MAX_MEDIA_TOTAL = 120_000_000  # hard cap protects the existing free database
 MAX_ACTIVE_PER_EDITOR = 2
 SESSION_SECONDS = 3 * 3600
 READ_BYTES = 1_000_000
@@ -165,6 +165,7 @@ def install_large_promotion_media(app):
         with c.read_transaction(maintain=False) as state:
             user,session=check_session(state,request,upload_id)
             total=session['size_bytes']
+        c.rate_limit('media-chunk:'+user['id'],100,3600)
         c.require(offset>=0 and offset%PART_BYTES==0 and offset<total,
                   'Invalid upload part offset.',422)
         length=int(size_header)
@@ -203,20 +204,29 @@ def install_large_promotion_media(app):
             expected=session['size_bytes']
         ident=None
         try:
+            # Read one 2MB part at a time rather than fetching ~50MB twice.
+            raw=bytearray()
+            digest_stream=hashlib.sha256()
             with conn() as con:
                 c.require(size_of_chunks(con,upload_id)==expected,
                           'Upload incomplete. Resume missing chunks.',409)
-                rows=con.execute('SELECT content FROM '+chunk_table()+
-                    ' WHERE upload_id='+bind()+' ORDER BY sequence',(upload_id,)).fetchall()
-            raw=b''.join(bytes(row[0]) for row in rows)
+                cursor=con.execute('SELECT content FROM '+chunk_table()+
+                    ' WHERE upload_id='+bind()+' ORDER BY sequence',(upload_id,))
+                while True:
+                    part=cursor.fetchone()
+                    if not part:break
+                    segment=bytes(part[0])
+                    raw.extend(segment)
+                    digest_stream.update(segment)
+                    c.require(len(raw)<=MAX_FILE_BYTES,'Media exceeds 50 MB.',413)
             c.require(len(raw)==expected,'Uploaded media size mismatch.',422)
             mime=collect_mime(raw,filename)
-            digest=hashlib.sha256(raw).hexdigest()
+            digest=digest_stream.hexdigest()
             ident=c.uid('MEDIA')
             with conn() as con:
                 con.execute('INSERT INTO '+media_table()+' (id,content,mime_type) VALUES ('+
-                    ','.join([bind()]*3)+')',(ident,raw,mime))
-            del raw,rows
+                    ','.join([bind()]*3)+')',(ident,bytes(raw),mime))
+            del raw
             with c.transaction() as state:
                 user,session=check_session(state,request,upload_id)
                 c.require(used_bytes(state)+expected<=MAX_MEDIA_TOTAL,
