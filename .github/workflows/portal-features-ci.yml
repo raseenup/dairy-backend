@@ -1,5 +1,11 @@
 name: First Milk feature validation
 on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.py'
+      - 'requirements.txt'
+      - '.github/workflows/portal-features-ci.yml'
   pull_request:
     paths:
       - '**/*.py'
