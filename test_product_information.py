@@ -55,6 +55,7 @@ def test_admin_can_publish_and_customer_can_read():
     assert data["manufacturer"]["expiry_date"]=="2026-11-27"
     assert data["manufacturer"]["batch_number"]=="BATCH-X"
     assert data["specifications"][0]["label"]=="Pack size"
+    assert "updated_by" not in data
     assert "updated_by" not in written.json().get("product",{})
     stale=client.patch("/admin"+path,headers=admin,json=sample(initial.json()["version"]))
     assert stale.status_code==409
