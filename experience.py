@@ -236,7 +236,7 @@ class Campaign(BaseModel):
     title: str = Field(min_length=1,max_length=120)
     description: str = Field(default='',max_length=1500)
     kind: Literal['banner','offer','menu','post'] = 'banner'
-    placement: Literal['home','home_location','offers','email'] = 'home'
+    placement: Literal['home','home_location','offers','email','driver'] = 'home'
     status: Literal['draft','published'] = 'published'
     media_id: str = Field(default='',max_length=100)
     alt_text: str = Field(default='',max_length=200)
