@@ -117,3 +117,46 @@ def test_reject_spoofed_mp4_and_disallow_publish_without_completed_media():
                        headers=admin).status_code==422
     assert client.delete('/admin/content-media/uploads/'+session,headers=admin).status_code==200
     assert client.get('/admin/content-media/uploads/'+session,headers=admin).status_code==404
+
+
+def test_marketing_media_library_prevents_removal_of_active_content():
+    admin=authorized()
+    customer,_=account()
+    image=tiny_image()
+    start=begin(admin,'summer.png',len(image)).json()
+    assert chunk(admin,start['id'],image).status_code==200
+    asset=client.post('/admin/content-media/uploads/'+start['id']+'/complete',
+        headers=admin).json()
+    aid=asset['id']
+    assert client.get('/admin/content-media/library',headers=customer).status_code==403
+    listing=client.get('/admin/content-media/library',headers=admin)
+    assert listing.status_code==200,listing.text
+    assert listing.json()['assets'][0]['id']==aid
+    assert listing.json()['assets'][0]['in_use'] is False
+    assert listing.json()['max_file_bytes']==MAX
+    published=client.post('/admin/content',headers=admin,json={
+        'title':'Fresh summer offer','placement':'home','media_id':aid})
+    assert published.status_code==200,published.text
+    assert client.get('/admin/content-media/library',headers=admin).json()['assets'][0]['in_use'] is True
+    assert client.delete('/admin/content-media/library/'+aid,
+        headers=admin).status_code==409
+    assert client.delete('/admin/content/'+published.json()['campaign']['id'],
+        headers=admin).status_code==200
+    deleted=client.delete('/admin/content-media/library/'+aid,headers=admin)
+    assert deleted.status_code==200,deleted.text
+    assert client.get('/media/campaign/'+aid).status_code==404
+    assert client.get('/admin/content-media/library',
+        headers=admin).json()['used_bytes']==0
+
+
+def test_email_placement_must_not_embed_large_videos():
+    admin=authorized()
+    mp4=sample_mp4(200)
+    start=begin(admin,'newsletter.mp4',len(mp4)).json()
+    assert chunk(admin,start['id'],mp4).status_code==200
+    asset=client.post('/admin/content-media/uploads/'+start['id']+'/complete',
+        headers=admin)
+    assert asset.status_code==200,asset.text
+    response=client.post('/admin/content',headers=admin,json={
+        'title':'Newsletter','placement':'email','media_id':asset.json()['id']})
+    assert response.status_code==422
