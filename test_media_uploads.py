@@ -85,7 +85,7 @@ def test_resumable_video_upload_rejected_truncation_and_partial_playback():
     started=begin(admin,'promo.mp4',len(payload))
     assert started.status_code==200,started.text
     ident=started.json()['id']
-    assert chunk(admin,ident,payload[CHUNK:],CHUNK).status_code==422
+    assert chunk(admin,ident,payload[CHUNK:],CHUNK).status_code==409
     first=chunk(admin,ident,payload[:CHUNK],0)
     assert first.status_code==200,first.text
     assert first.json()['offset']==CHUNK
