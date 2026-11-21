@@ -1314,6 +1314,9 @@ def install(app, legacy):
     except OSError:pass
     from experience import install_experience
     install_experience(app)
+    # Authorized, multipart 50MB marketing assets; preserve existing media URLs.
+    from media_uploads import install_large_promotion_media
+    install_large_promotion_media(app)
 
     from operations import install_operations
     install_operations(app)
@@ -1330,7 +1333,7 @@ def install(app, legacy):
     install_return_collections(app)
     from return_quality import install_return_quality
     install_return_quality(app)
-    app.version='13.3.0'
+    app.version='13.4.0'
     from starlette.middleware.gzip import GZipMiddleware
     class APICompression:
         def __init__(self, app):
