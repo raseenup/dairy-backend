@@ -124,7 +124,7 @@ def install_product_information(app):
             information["manufacturer"] = {
                 key: value.strip() for key, value in information["manufacturer"].items()
             }
-            information["updated_by"] = user["email"]
+            # Audit records the acting staff user; public product data must not leak staff identities.
             information["updated_at"] = c.now()
             item["information"] = information
             item["version"] = item.get("version", 1) + 1
