@@ -20,4 +20,4 @@ jobs:
       - name: Compile all Python modules
         run: python -m compileall -q .
       - name: Run isolated new feature and security regressions
-        run: python -m pytest -q test_official_brand_email.py test_media_uploads.py test_return_quality.py test_return_collections.py test_password_policy_v14.py test_portal_features.py test_portal_v13.py test_secure_flows.py
+        run: python -m pytest -q test_official_brand_email.py test_media_uploads.py test_return_quality.py test_return_collections.py test_password_policy_v14.py test_portal_features.py test_portal_v13.py test_secure_flows.py test_product_information.py
