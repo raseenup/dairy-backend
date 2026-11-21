@@ -313,7 +313,8 @@ def campaign_record(state, body, actor_email, old=None):
 def public_campaign(state, item):
     asset = state.get('campaign_media',{}).get(item['media_id'],{})
     return {k:v for k,v in dict(item,media_url='/media/campaign/'+item['media_id'] if asset else '',
-                               mime_type=asset.get('mime_type','')).items() if k not in {'updated_by'}}
+                               mime_type=asset.get('mime_type',''),
+                               media_size=int(asset.get('size') or 0)).items() if k not in {'updated_by'}}
 
 
 def install_experience(app):
