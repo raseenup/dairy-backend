@@ -77,8 +77,8 @@ def reserved_bytes(state):
                if item.get('expires_at',0)>now)
 
 def size_of_chunks(conn_, ident):
-    sql='SELECT COALESCE(SUM('+('OCTET_LENGTH' if c.DATABASE_URL else 'length')+
-        '(content)),0) FROM '+chunk_table()+' WHERE upload_id='+bind()
+    sql=('SELECT COALESCE(SUM('+('OCTET_LENGTH' if c.DATABASE_URL else 'length')+
+        '(content)),0) FROM '+chunk_table()+' WHERE upload_id='+bind())
     return int(conn_.execute(sql,(ident,)).fetchone()[0])
 
 def collect_mime(raw:bytes, filename:str):
@@ -209,9 +209,9 @@ def install_large_promotion_media(app):
                           'A different chunk is already uploaded at this position.',409)
                 return {'offset':current,'total_size':total,'reused':True}
             c.require(current==offset,'Upload is out of sequence. Refresh its progress.',409)
-            sql='INSERT INTO '+chunk_table()+
+            sql=('INSERT INTO '+chunk_table()+
                 ' (upload_id,sequence,content,digest,created_epoch) VALUES ('+
-                ','.join([bind()]*5)+')'
+                ','.join([bind()]*5)+')')
             con.execute(sql,(upload_id,offset//PART_BYTES,bytes(data),digest,time.time()))
         return {'offset':offset+length,'total_size':total}
 
