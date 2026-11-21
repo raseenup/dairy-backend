@@ -85,7 +85,7 @@ def collect_mime(raw:bytes, filename:str):
     suffix=os.path.splitext(filename.lower())[1]
     c.require(suffix in {e for exts in ALLOWED_EXTENSIONS.values() for e in exts},
               'Only JPEG, PNG, GIF, WebP and MP4 are supported.',422)
-    if len(raw)>=16 and raw[4:8]==b'ftyp' and raw[8:12] in {
+    if len(raw)>=16 and raw[4:8]==b'ftyp' and bytes(raw[8:12]) in {
         b'isom',b'iso2',b'iso4',b'iso5',b'iso6',b'iso8',b'mp41',
         b'mp42',b'avc1',b'M4V ',b'dash',b'3gp4',b'3gp5'}:
         # Validate the outer MP4 boxes (the browser remains responsible for
@@ -287,8 +287,7 @@ def install_large_promotion_media(app):
         getattr(route,'path','')=='/media/campaign/{media_id}' and
         'GET' in getattr(route,'methods',set()))]
 
-    @app.api_route('/media/campaign/{media_id}',methods=['GET','HEAD'],
-                   tags=['Public advertising assets'])
+    @app.get('/media/campaign/{media_id}',tags=['Public advertising assets'])
     def campaign_asset(media_id:str,request:Request):
         c.require(bool(MEDIA_ID.fullmatch(media_id)),'Asset not found.',404)
         with c.read_transaction(maintain=False) as state:
@@ -343,3 +342,7 @@ def install_large_promotion_media(app):
                 if not blob or not blob[0]:break
                 data=bytes(blob[0]);position+=len(data);yield data
         return StreamingResponse(chunks(),status_code=status,media_type=mime,headers=common)
+
+    @app.head('/media/campaign/{media_id}',include_in_schema=False)
+    def campaign_asset_head(media_id:str,request:Request):
+        return campaign_asset(media_id,request)
