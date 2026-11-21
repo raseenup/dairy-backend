@@ -243,6 +243,23 @@ def install_large_promotion_media(app):
             c.require(len(raw)==expected,'Uploaded media size mismatch.',422)
             mime=collect_mime(raw,filename)
             digest=digest_stream.hexdigest()
+            # Reusing an identical, completed upload must not spend the free
+            # database quota again. Match verified content hash, size and MIME
+            # inside the state lock, so concurrent duplicate uploads serialize.
+            with c.transaction() as state:
+                user,session=check_session(state,request,upload_id)
+                match=next((item for item in state.get('campaign_media',{}).values()
+                    if item.get('sha256')==digest
+                    and int(item.get('size',0))==expected
+                    and item.get('mime_type')==mime),None)
+                if match:
+                    state['campaign_upload_sessions'].pop(upload_id,None)
+                    c.audit(state,user['email'],'CAMPAIGN_MEDIA_REUSED',match['id'])
+            if match:
+                with conn() as con:
+                    con.execute('DELETE FROM '+chunk_table()+' WHERE upload_id='+bind(),(upload_id,))
+                return {'id':match['id'],'url':'/media/campaign/'+match['id'],
+                        'mime_type':mime,'size':expected,'sha256':digest,'reused':True}
             ident=c.uid('MEDIA')
             with conn() as con:
                 con.execute('INSERT INTO '+media_table()+' (id,content,mime_type) VALUES ('+
