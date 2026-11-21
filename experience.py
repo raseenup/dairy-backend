@@ -305,7 +305,11 @@ def campaign_record(state, body, actor_email, old=None):
     c.require(not data['ends_epoch'] or not data['starts_epoch'] or data['ends_epoch'] > data['starts_epoch'],
               'End time must follow start time.',422)
     if data['media_id']:
-        c.require(data['media_id'] in state.setdefault('campaign_media',{}),'Upload not found.',404)
+        asset=state.setdefault('campaign_media',{}).get(data['media_id'])
+        c.require(asset,'Upload not found.',404)
+        if data['placement']=='email':
+            c.require(asset.get('mime_type')!='video/mp4',
+                      'Email banners require an image, not a video.',422)
     return dict(data,id=old['id'] if old else c.uid('AD'),version=(old['version']+1) if old else 1,
                 created_at=old['created_at'] if old else c.now(),updated_at=c.now(),updated_by=actor_email)
 
