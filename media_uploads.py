@@ -280,6 +280,44 @@ def install_large_promotion_media(app):
             con.execute('DELETE FROM '+chunk_table()+' WHERE upload_id='+bind(),(upload_id,))
         return {'message':'Unpublished upload cancelled.'}
 
+    def media_in_use(state, ident):
+        for campaign in state.get('campaigns',{}).values():
+            if not campaign.get('deleted') and campaign.get('media_id')==ident:
+                return True
+        site=state.get('website_design',{}) or {}
+        if site.get('media_id')==ident:
+            return True
+        return any(block.get('media_id')==ident for block in site.get('blocks',[]))
+
+    @app.get('/admin/content-media/library',tags=['Marketing media library'])
+    def list_media_library(request:Request):
+        with c.read_transaction(maintain=False) as state:
+            allowed_upload(state,request)
+            entries=[{'id':item['id'],'filename':item.get('filename','Uploaded media'),
+                'mime_type':item.get('mime_type',''),'size':int(item.get('size',0)),
+                'created_at':item.get('created_at',''),
+                'in_use':media_in_use(state,item['id'])}
+                for item in state.get('campaign_media',{}).values()]
+            return {'assets':sorted(entries,key=lambda item:item['created_at'],reverse=True),
+                'used_bytes':used_bytes(state),'max_bytes':MAX_MEDIA_TOTAL,
+                'max_file_bytes':MAX_FILE_BYTES}
+
+    @app.delete('/admin/content-media/library/{media_id}',
+                tags=['Marketing media library'])
+    def remove_unused_media(media_id:str,request:Request):
+        c.require(bool(MEDIA_ID.fullmatch(media_id)),'Media not found.',404)
+        with c.transaction() as state:
+            user=allowed_upload(state,request)
+            media=state.get('campaign_media',{}).get(media_id)
+            c.require(media,'Media not found.',404)
+            c.require(not media_in_use(state,media_id),
+                'This file is still used by an active ad or website section. Unpublish or replace it first.',409)
+            state['campaign_media'].pop(media_id)
+            c.audit(state,user['email'],'UNUSED_PROMOTION_MEDIA_REMOVED',media_id)
+        with conn() as con:
+            con.execute('DELETE FROM '+media_table()+' WHERE id='+bind(),(media_id,))
+        return {'message':'Unlinked media removed from the library.','id':media_id}
+
     # The old asset endpoint fetched the entire video into RAM, causing slow
     # startup/playback. Preserve its path and immutable URLs while streaming
     # directly from DB in bounded chunks, including partial-range playback.
