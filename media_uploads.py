@@ -25,7 +25,7 @@ PART_BYTES = 2_000_000
 MAX_MEDIA_TOTAL = 120_000_000  # hard cap protects the existing free database
 MAX_ACTIVE_PER_EDITOR = 2
 SESSION_SECONDS = 3 * 3600
-READ_BYTES = 1_000_000
+READ_BYTES = 2_000_000  # Fewer sequential video range round trips; bounded per-request memory.
 ALLOWED_EXTENSIONS = {
     'image/jpeg': {'.jpg', '.jpeg'},
     'image/png': {'.png'},
