@@ -160,3 +160,26 @@ def test_email_placement_must_not_embed_large_videos():
     response=client.post('/admin/content',headers=admin,json={
         'title':'Newsletter','placement':'email','media_id':asset.json()['id']})
     assert response.status_code==422
+
+
+def test_identical_uploads_reuse_stored_asset_and_do_not_consume_extra_quota():
+    admin=authorized()
+    image=tiny_image()
+    first=begin(admin,'one.png',len(image))
+    assert first.status_code==200,first.text
+    assert chunk(admin,first.json()['id'],image).status_code==200
+    first_done=client.post('/admin/content-media/uploads/'+first.json()['id']+'/complete',headers=admin)
+    assert first_done.status_code==200,first_done.text
+    before=client.get('/admin/content-media/library',headers=admin).json()
+    second=begin(admin,'another-name.png',len(image))
+    assert second.status_code==200,second.text
+    assert chunk(admin,second.json()['id'],image).status_code==200
+    second_done=client.post('/admin/content-media/uploads/'+second.json()['id']+'/complete',headers=admin)
+    assert second_done.status_code==200,second_done.text
+    assert second_done.json()['id']==first_done.json()['id']
+    assert second_done.json()['reused'] is True
+    after=client.get('/admin/content-media/library',headers=admin).json()
+    assert before['used_bytes']==after['used_bytes']
+    assert len(before['assets'])==len(after['assets'])==1
+    with c.read_transaction(maintain=False) as state:
+        assert not state.get('campaign_upload_sessions',{})
