@@ -1321,6 +1321,9 @@ def install(app, legacy):
     from operations import install_operations
     install_operations(app)
 
+    from product_information import install_product_information
+    install_product_information(app)
+
     from workforce import install_workforce
     install_workforce(app)
 
