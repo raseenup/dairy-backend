@@ -10,6 +10,8 @@ def test_fmv_identity_in_verification_email():
     assert 'FIRST MILK' in html
     assert '123456' in mail['text']
     assert '<script' not in html.lower()
+    assert 'media.canva.com' not in html
+    assert 'https://customer.firstmilkventure.com/assets/brand/' in html
 
 
 def test_fmv_identity_in_delivery_or_finance_email():
