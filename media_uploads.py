@@ -88,6 +88,27 @@ def collect_mime(raw:bytes, filename:str):
     if len(raw)>=16 and raw[4:8]==b'ftyp' and raw[8:12] in {
         b'isom',b'iso2',b'iso4',b'iso5',b'iso6',b'iso8',b'mp41',
         b'mp42',b'avc1',b'M4V ',b'dash',b'3gp4',b'3gp5'}:
+        # Validate the outer MP4 boxes (the browser remains responsible for
+        # codec support). Reject truncated, malformed and spoofed containers.
+        at=0
+        seen=set()
+        while at<len(raw):
+            c.require(at+8<=len(raw),'Truncated MP4 atom.',422)
+            box_size=int.from_bytes(raw[at:at+4],'big')
+            kind=bytes(raw[at+4:at+8])
+            header=8
+            if box_size==1:
+                c.require(at+16<=len(raw),'Truncated extended MP4 atom.',422)
+                box_size=int.from_bytes(raw[at+8:at+16],'big')
+                header=16
+            elif box_size==0:
+                box_size=len(raw)-at
+            c.require(box_size>=header and at+box_size<=len(raw),
+                      'Malformed MP4 atom length.',422)
+            seen.add(kind)
+            at+=box_size
+        c.require({b'ftyp',b'moov',b'mdat'}<=seen,
+                  'MP4 must contain valid file, movie and media atoms.',422)
         mime='video/mp4'
     else:
         try:
