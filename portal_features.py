@@ -180,6 +180,29 @@ def assistant_answer(message,entries):
     return {'reply':matches[0]['title']+': '+excerpt[:650]+('…' if len(excerpt)>650 else ''),
             'mode':'published_knowledge','sources':selected}
 
+# Public routes only need published website content or approved knowledge.
+# A normal state snapshot includes ~1 MB of customer order/delivery data.
+# Fetching individual JSONB fields avoids transferring that unrelated private
+# material on every public request, reducing Supabase egress and latency.
+PUBLIC_SNAPSHOT_FIELDS = frozenset({
+    'website_design', 'campaign_media', 'assistant_knowledge', 'company_pages'
+})
+
+def published_snapshot(*fields):
+    if not fields or not set(fields) <= PUBLIC_SNAPSHOT_FIELDS:
+        raise ValueError('Public snapshot requires approved fields only.')
+    if not c.DATABASE_URL:
+        with c.read_transaction(maintain=False) as state:
+            return {field: state.get(field, {}) for field in fields}
+    # Bind field names as values, not SQL identifiers. All values are read from
+    # one committed row, so website content and published media are consistent.
+    expressions = ', '.join(["COALESCE(data->%s, '{}'::jsonb)"] * len(fields))
+    query = 'SELECT ' + expressions + ' FROM fmv_secure.application_state WHERE id=1'
+    with c.postgres_connect() as connection:
+        row = connection.execute(query, fields).fetchone()
+    return dict(zip(fields, row)) if row else {field: {} for field in fields}
+
+
 def site_view(state):
     site={**DEFAULT_SITE,**state.get('website_design',{})}
     media=state.get('campaign_media',{}).get(site.get('media_id',''))
@@ -229,8 +252,7 @@ def install_portal_features(app):
     @app.post('/public/assistant/chat',tags=['Public published-information chatbot'])
     def public_chat(request:Request,body:AssistantQuestion):
         c.rate_limit('public-assistant:'+str(request.client.host if request.client else 'unknown'),12,60)
-        with c.read_transaction() as state:
-            docs=company_info(state)
+        docs=company_info(published_snapshot('company_pages','assistant_knowledge'))
         return assistant_answer(c.clean_text(body.message,1200),docs)
 
     @app.get('/admin/assistant/knowledge',tags=['Assistant editor'])
@@ -263,7 +285,7 @@ def install_portal_features(app):
 
     @app.get('/public/website',tags=['Published website design'])
     def published_website():
-        with c.read_transaction() as state:return site_view(state)
+        return site_view(published_snapshot('website_design','campaign_media'))
 
     @app.get('/admin/website',tags=['Website editor'])
     def admin_website(request:Request):
