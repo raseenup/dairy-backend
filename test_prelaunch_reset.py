@@ -90,3 +90,27 @@ def test_invalid_stock_reference_blocks_reset(armed):
     result = overview(data)
     assert result['can_reset'] is False
     assert 'inventory' in ' '.join(result['blocked_reasons']).lower()
+
+
+def test_active_shift_blocks_reset(armed):
+    data = demo()
+    data['shifts'] = {'SHIFT1': {'status': 'active'}}
+    assert not overview(data)['can_reset']
+
+
+def test_unstarted_assigned_test_order_can_be_cleared(armed):
+    data = demo()
+    data['orders']['ORDER1']['status'] = 'Assigned'
+    assert overview(data)['can_reset']
+
+
+def test_only_operation_notifications_are_selected(armed):
+    from prelaunch_reset import reset_notifications
+    data = demo()
+    data['orders'] = {'ORDER10001': data['orders']['ORDER1']}
+    data['notifications'] = {
+        'N1': {'title': 'Order assigned', 'message': 'Order ORDER10001'},
+        'N2': {'title': 'Your password', 'message': 'Security notification'},
+    }
+    assert list(reset_notifications(data)) == ['N1']
+    assert overview(data)['counts']['operation_notifications'] == 1
