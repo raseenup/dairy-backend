@@ -28,13 +28,13 @@ ACCOUNTING_KEYS = (
     'driver_earnings', 'driver_payouts', 'earning_requests',
     'credit', 'quotes',
 )
-EXTRA_KEYS = ('notifications', 'idempotency')
+EXTRA_KEYS = ('idempotency',)
 ALL_KEYS = tuple(dict.fromkeys(DISPATCH_KEYS + ACCOUNTING_KEYS + EXTRA_KEYS))
 KEEP_KEYS = (
     'users', 'drivers', 'products', 'tax', 'branding', 'invites', 'audit',
     'events', 'driver_pay_rules', 'driver_vehicles', 'driver_documents',
     'addresses', 'sessions', 'challenges', 'campaigns', 'company_pages',
-    'tickets', 'uploads',
+    'tickets', 'uploads', 'notifications',
 )
 
 
@@ -78,7 +78,7 @@ def overview(state):
     if state.get('prelaunch_reset_completed'):
         reasons.append('The one-time pre-launch reset has already been completed.')
     for order in state.get('orders', {}).values():
-        if order.get('status') not in {'Unassigned', 'Awaiting Payment', 'Cancelled'}:
+        if order.get('status') not in {'Unassigned', 'Assigned', 'Awaiting Payment', 'Cancelled'}:
             reasons.append('A delivery has progressed beyond pre-dispatch. Complete or archive real operations separately.')
             break
         if (order.get('provider_order_id') or order.get('provider_payment_id')
@@ -86,6 +86,13 @@ def overview(state):
                 or float(order.get('cod_collected') or 0) > 0):
             reasons.append('A real or external payment record exists. Financial transactions cannot be erased using Launch Reset.')
             break
+    if any(shift.get('status') != 'completed' for shift in state.get('shifts', {}).values()):
+        reasons.append('A driver has an active or on-break shift. Clock out and finish real driver work first.')
+    if any(pickup.get('status') == 'scheduled' for pickup in state.get('return_collections', {}).values()):
+        reasons.append('Scheduled return pickups must be completed or cancelled before reset.')
+    if any(str(item.get('kind', '')).startswith(('order_', 'subscription_'))
+           and item.get('status') == 'sending' for item in state.get('mail_outbox', {}).values()):
+        reasons.append('A transactional delivery or subscription email is currently sending. Retry once it finishes.')
     for key in ('cash_receipts', 'cash_handovers', 'driver_earnings',
                 'driver_payouts', 'credit', 'return_refund_authorizations'):
         if state.get(key):
@@ -182,8 +189,16 @@ def install_prelaunch_reset(app):
                 product = state['products'][product_id]
                 product['stock_quantity'] += quantity
                 product['version'] = product.get('version', 1) + 1
+            operation_ids = {str(identifier) for key in DISPATCH_KEYS + ACCOUNTING_KEYS
+                             for identifier in state.get(key, {})}
             for key in ALL_KEYS:
                 state[key] = {}
+            # Preserve account-security, registration and marketing notifications.
+            # Only remove notifications which reference cleared operation IDs.
+            for key, item in list(state.get('notifications', {}).items()):
+                note = str(item.get('title', '')) + ' ' + str(item.get('message', ''))
+                if any(identifier in note for identifier in operation_ids):
+                    del state['notifications'][key]
             for key, item in list(state.get('mail_outbox', {}).items()):
                 if str(item.get('kind', '')).startswith(('order_', 'subscription_')):
                     del state['mail_outbox'][key]
