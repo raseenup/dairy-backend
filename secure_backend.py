@@ -1336,6 +1336,9 @@ def install(app, legacy):
     install_return_collections(app)
     from return_quality import install_return_quality
     install_return_quality(app)
+    # Opt-in one-time pre-public-launch cleanup, super-admin only.
+    from prelaunch_reset import install_prelaunch_reset
+    install_prelaunch_reset(app)
     app.version='13.4.0'
     from starlette.middleware.gzip import GZipMiddleware
     class APICompression:
