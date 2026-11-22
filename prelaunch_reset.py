@@ -71,6 +71,18 @@ def inventory_reversal(state):
     return restore
 
 
+def reset_notifications(state):
+    """Return only notifications mentioning a record explicitly cleared by reset."""
+    referenced = {str(identifier) for key in (
+        'orders', 'invoices', 'shifts', 'driver_earnings', 'driver_payouts',
+        'return_collections', 'rma', 'incentive_claims'
+    ) for identifier in state.get(key, {}) if len(str(identifier)) >= 8}
+    return {key: notification for key, notification in state.get('notifications', {}).items()
+            if any(identifier in (
+                str(notification.get('title', '')) + ' ' + str(notification.get('message', ''))
+            ) for identifier in referenced)}
+
+
 def overview(state):
     reasons = []
     if not is_armed():
@@ -107,6 +119,7 @@ def overview(state):
         restore = {}
         reasons.append('Inventory reconciliation failed. Resolve the inconsistent test order before reset.')
     counts = {key: len(state.get(key, {})) for key in ALL_KEYS}
+    counts['operation_notifications'] = len(reset_notifications(state))
     retained = {key: len(state.get(key, {})) if hasattr(state.get(key, {}), '__len__') else 0 for key in KEEP_KEYS}
     return dict(enabled=is_armed(), can_reset=not reasons, blocked_reasons=list(dict.fromkeys(reasons)),
                 dispatch_keys=list(DISPATCH_KEYS), accounting_keys=list(ACCOUNTING_KEYS),
@@ -142,6 +155,7 @@ def install_prelaunch_reset(app):
             package = dict(kind='fmv-prelaunch-archive',created_at=c.now(),
                            created_by=user['email'],revision=state.get('revision', 0),
                            data={key: state.get(key, {}) for key in ALL_KEYS},
+                           operation_notifications=reset_notifications(state),
                            order_emails={key: value for key, value in state.get('mail_outbox', {}).items()
                                          if str(value.get('kind', '')).startswith(('order_', 'subscription_'))},
                            inventory_reversal=details['restore_stock'])
@@ -189,16 +203,12 @@ def install_prelaunch_reset(app):
                 product = state['products'][product_id]
                 product['stock_quantity'] += quantity
                 product['version'] = product.get('version', 1) + 1
-            operation_ids = {str(identifier) for key in DISPATCH_KEYS + ACCOUNTING_KEYS
-                             for identifier in state.get(key, {})}
+            scoped_notification_ids = list(reset_notifications(state))
             for key in ALL_KEYS:
                 state[key] = {}
-            # Preserve account-security, registration and marketing notifications.
-            # Only remove notifications which reference cleared operation IDs.
-            for key, item in list(state.get('notifications', {}).items()):
-                note = str(item.get('title', '')) + ' ' + str(item.get('message', ''))
-                if any(identifier in note for identifier in operation_ids):
-                    del state['notifications'][key]
+            # Preserve registration, login, and marketing notifications.
+            for notification_id in scoped_notification_ids:
+                del state['notifications'][notification_id]
             for key, item in list(state.get('mail_outbox', {}).items()):
                 if str(item.get('kind', '')).startswith(('order_', 'subscription_')):
                     del state['mail_outbox'][key]
