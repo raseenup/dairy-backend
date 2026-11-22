@@ -120,6 +120,10 @@ def overview(state):
         reasons.append('Inventory reconciliation failed. Resolve the inconsistent test order before reset.')
     counts = {key: len(state.get(key, {})) for key in ALL_KEYS}
     counts['operation_notifications'] = len(reset_notifications(state))
+    counts['transactional_emails'] = sum(
+        1 for item in state.get('mail_outbox', {}).values()
+        if str(item.get('kind', '')).startswith(('order_', 'subscription_'))
+    )
     retained = {key: len(state.get(key, {})) if hasattr(state.get(key, {}), '__len__') else 0 for key in KEEP_KEYS}
     return dict(enabled=is_armed(), can_reset=not reasons, blocked_reasons=list(dict.fromkeys(reasons)),
                 dispatch_keys=list(DISPATCH_KEYS), accounting_keys=list(ACCOUNTING_KEYS),
@@ -156,6 +160,11 @@ def install_prelaunch_reset(app):
             package = dict(kind='fmv-prelaunch-archive',created_at=c.now(),
                            created_by=user['email'],revision=state.get('revision', 0),
                            data={key: state.get(key, {}) for key in ALL_KEYS},
+                           product_inventory_before={
+                               key: dict(stock_quantity=product.get('stock_quantity', 0),
+                                         version=product.get('version', 0))
+                               for key, product in state.get('products', {}).items()
+                           },
                            operation_notifications=reset_notifications(state),
                            order_emails={key: value for key, value in state.get('mail_outbox', {}).items()
                                          if str(value.get('kind', '')).startswith(('order_', 'subscription_'))},
