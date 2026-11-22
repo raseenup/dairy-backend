@@ -114,3 +114,132 @@ def test_only_operation_notifications_are_selected(armed):
     }
     assert list(reset_notifications(data)) == ['N1']
     assert overview(data)['counts']['operation_notifications'] == 1
+
+
+def test_reset_endpoints_are_super_admin_only_and_one_time(armed, monkeypatch):
+    """Exercise actual registered routes with isolated, disposable state."""
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    import prelaunch_reset as reset
+
+    state = demo()
+    state['revision'] = 0
+    state['mail_outbox'] = {
+        'mail-order': {'kind': 'order_placed', 'status': 'queued'},
+        'mail-auth': {'kind': 'signup_verification', 'status': 'queued'},
+    }
+    state['notifications'] = {
+        'auth': {'title': 'Welcome', 'message': 'Account verified.'},
+        'order': {'title': 'Assigned order', 'message': 'ORDER00001'},
+    }
+    original_order = state['orders'].pop('ORDER1')
+    state['orders']['ORDER00001'] = original_order
+    actor_info = {'id': 'super-1', 'email': 'owner@example.test',
+                  'portal': 'admin', 'role': 'super_admin'}
+
+    @contextmanager
+    def fake_read_transaction(maintain=False):
+        yield state
+
+    @contextmanager
+    def fake_transaction():
+        yield state
+
+    def fake_require(ok, message='', status=400):
+        if not ok:
+            raise HTTPException(status, message)
+
+    def fake_actor(db, request, role):
+        assert role == 'admin'
+        return actor_info, 'session-1'
+
+    def fake_audit(db, actor_name, event, object_id=''):
+        db['revision'] += 1
+        db.setdefault('audit', []).append({'actor': actor_name, 'event': event})
+
+    proxy = SimpleNamespace(
+        actor=fake_actor, require=fake_require, audit=fake_audit,
+        transaction=fake_transaction, read_transaction=fake_read_transaction,
+        now=lambda: '2026-11-22T10:00:00+05:30',
+    )
+    monkeypatch.setattr(reset, 'core', lambda: proxy)
+    app = FastAPI()
+    reset.install_prelaunch_reset(app)
+    client = TestClient(app)
+
+    actor_info['role'] = 'finance'
+    assert client.get('/admin/prelaunch-reset/preview').status_code == 403
+    assert not state.get('prelaunch_reset_completed')
+
+    actor_info['role'] = 'super_admin'
+    assert client.get('/admin/prelaunch-reset/preview').json()['can_reset']
+    downloaded = client.get('/admin/prelaunch-reset/export')
+    assert downloaded.status_code == 200
+    archive = downloaded.json()
+    assert 'ORDER00001' in archive['data']['orders']
+    assert archive['operation_notifications'] == {'order': state['notifications']['order']}
+
+    prepared = client.post('/admin/prelaunch-reset/prepare').json()
+    assert prepared['ticket']
+    payload = {
+        'ticket': prepared['ticket'],
+        'confirmation': prepared['confirmation'],
+        'backup_acknowledged': True,
+        'inventory_acknowledged': True,
+    }
+    result = client.post('/admin/prelaunch-reset/execute', json=payload)
+    assert result.status_code == 200, result.text
+    assert result.json()['status'] == 'reset_completed'
+    assert not state['orders'] and not state['invoices']
+    assert state['products']['milk']['stock_quantity'] == 7
+    assert state['users'] and state['drivers']
+    assert state['mail_outbox'] == {'mail-auth': {'kind': 'signup_verification', 'status': 'queued'}}
+    assert state['notifications'] == {'auth': {'title': 'Welcome', 'message': 'Account verified.'}}
+    assert state['prelaunch_reset_completed']
+    assert client.post('/admin/prelaunch-reset/prepare').status_code == 409
+    assert client.post('/admin/prelaunch-reset/execute', json=payload).status_code == 403
+
+
+def test_reset_rejects_a_state_change_after_prepare(armed, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    import prelaunch_reset as reset
+
+    state = demo()
+    state['revision'] = 0
+
+    @contextmanager
+    def txn(*args, **kwargs):
+        yield state
+
+    def require(ok, message='', status=400):
+        if not ok:
+            raise HTTPException(status, message)
+
+    def audit(db, user, event, id=''):
+        db['revision'] += 1
+
+    proxy = SimpleNamespace(
+        transaction=txn, read_transaction=txn, require=require,
+        actor=lambda db, request, portal: ({'id': 'super','email':'owner@example.test',
+                                            'role':'super_admin'}, 's1'),
+        audit=audit, now=lambda:'2026-11-22T00:00:00+05:30',
+    )
+    monkeypatch.setattr(reset, 'core', lambda: proxy)
+    app = FastAPI()
+    reset.install_prelaunch_reset(app)
+    client = TestClient(app)
+    prepared = client.post('/admin/prelaunch-reset/prepare').json()
+    state['revision'] += 1  # Simulate another authenticated operation.
+    response = client.post('/admin/prelaunch-reset/execute', json={
+        'ticket': prepared['ticket'],
+        'confirmation': prepared['confirmation'],
+        'backup_acknowledged': True,
+        'inventory_acknowledged': True,
+    })
+    assert response.status_code == 409
+    assert state['orders'] and not state.get('prelaunch_reset_completed')
