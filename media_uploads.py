@@ -304,6 +304,8 @@ def install_large_promotion_media(app):
         site=state.get('website_design',{}) or {}
         if site.get('media_id')==ident:
             return True
+        if ident in site.get('hero_product_media',{}).values():
+            return True
         return any(block.get('media_id')==ident for block in site.get('blocks',[]))
 
     @app.get('/admin/content-media/library',tags=['Marketing media library'])
