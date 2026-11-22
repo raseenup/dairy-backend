@@ -93,3 +93,59 @@ def test_editor_role_can_publish_but_finance_cannot(monkeypatch):
     with pytest.raises(HTTPException) as error:
         features.editing_actor({},object())
     assert error.value.status_code == 403
+
+
+def test_public_snapshot_cannot_fetch_customer_or_financial_data():
+    for name in ('orders','users','sessions','payments','audit'):
+        with pytest.raises(ValueError):
+            features.published_snapshot(name)
+    with pytest.raises(ValueError):
+        features.published_snapshot()
+
+
+def test_public_snapshot_sql_reads_only_requested_jsonb_fields(monkeypatch):
+    class Connection:
+        def __init__(self):
+            self.calls=[]
+        def __enter__(self):
+            return self
+        def __exit__(self,*args):
+            return False
+        def execute(self,sql,params):
+            self.calls.append((sql,params))
+            return self
+        def fetchone(self):
+            return ({'version':4,'copy':{},'blocks':[]},{'M1':{'id':'M1','mime_type':'image/webp'}})
+
+    fake=Connection()
+    monkeypatch.setattr(features.c,'DATABASE_URL','postgresql://test-host/fake')
+    monkeypatch.setattr(features.c,'postgres_connect',lambda:fake)
+    snapshot=features.published_snapshot('website_design','campaign_media')
+    assert set(snapshot)=={'website_design','campaign_media'}
+    assert snapshot['website_design']['version']==4
+    query,params=fake.calls[0]
+    assert 'SELECT' in query and "data->%s" in query
+    assert 'SELECT data FROM' not in query
+    assert tuple(params)==('website_design','campaign_media')
+    assert 'orders' not in query and 'users' not in query
+
+
+def test_public_snapshot_offline_preserves_original_website_view(monkeypatch):
+    state={
+      'website_design':{'version':6,'copy':{'hero_title':'Freshness'},'blocks':[],'media_id':'M1'},
+      'campaign_media':{'M1':{'id':'M1','mime_type':'image/webp'}},
+      'orders':{'private-order':{'customer_phone':'not public'}}
+    }
+    from contextlib import contextmanager
+    @contextmanager
+    def fake_read_transaction(maintain=False):
+        assert maintain is False
+        yield state
+    monkeypatch.setattr(features.c,'DATABASE_URL','')
+    monkeypatch.setattr(features.c,'read_transaction',fake_read_transaction)
+    public=features.published_snapshot('website_design','campaign_media')
+    assert 'orders' not in public
+    viewed=features.site_view(public)
+    assert viewed['version']==6
+    assert viewed['media_url']=='/media/campaign/M1'
+    assert 'customer_phone' not in str(viewed)
