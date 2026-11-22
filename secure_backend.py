@@ -775,11 +775,30 @@ def admin_dispatch(s,u,r,d):
         return {'message':'Driver approved. Approval email queued; they can sign in with OTP.'}
     if p=='/admin/drivers/{driver_key}':
         ident=pp['driver_key'];dr=s['drivers'].get(ident);require(dr,'Driver not found.',404)
-        require(not any(o.get('assigned_driver_id')==ident and o['status'] not in {'Delivered','Cancelled','Failed'} for o in s['orders'].values()),'Reassign active deliveries before removing this driver.',409)
-        dr['deleted']=True
-        if dr.get('email'):
-            usr=s['users']['driver:'+dr['email']];usr['approved']=False;usr['token_version']+=1
-        audit(s,u['email'],'DRIVER_REMOVED',ident);return {'message':'Driver disabled.'}
+        # Never orphan ongoing work. Historical completed shifts, deliveries,
+        # payment records and audits remain intact for accounting/audit purposes.
+        require(not any(o.get('assigned_driver_id')==ident and o['status'] not in {'Delivered','Cancelled','Failed'} for o in s['orders'].values()),
+                'Reassign active deliveries before removing this driver.',409)
+        require(not any(sh.get('driver_id')==ident and sh.get('status')!='completed' for sh in s['shifts'].values()),
+                'Clock out the active shift before permanently removing this driver.',409)
+        email=dr.get('email','').strip().lower()
+        # Destroy account credentials and profile in the same transaction.
+        # A returnee receives a new ID and must sign up, verify OTP and be
+        # approved again; old tokens are revoked regardless of their expiry.
+        if email:
+            s['users'].pop('driver:'+email,None)
+            for sid,session_info in list(s['sessions'].items()):
+                if session_info.get('portal')=='driver' and session_info.get('email')==email:
+                    del s['sessions'][sid]
+            for cid,challenge in list(s['challenges'].items()):
+                if challenge.get('portal')=='driver' and challenge.get('email')==email:
+                    del s['challenges'][cid]
+            for nid,item in list(s['notifications'].items()):
+                if item.get('portal')=='driver' and item.get('owner')==email:
+                    del s['notifications'][nid]
+        del s['drivers'][ident]
+        audit(s,u['email'],'DRIVER_PERMANENTLY_REMOVED',ident)
+        return {'message':'Driver account permanently removed. A returning driver must register again, verify email OTP, and receive a new administrator approval.'}
     if p=='/admin/deliveries':
         day=r.query_params.get('delivery_date');zone=r.query_params.get('zone_id')
         return [order_view(o) for o in s['orders'].values() if (not day or o['delivery_date']==day) and (not zone or o['zone_id']==zone)]
