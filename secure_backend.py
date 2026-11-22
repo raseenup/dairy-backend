@@ -781,6 +781,9 @@ def admin_dispatch(s,u,r,d):
                 'Reassign active deliveries before removing this driver.',409)
         require(not any(sh.get('driver_id')==ident and sh.get('status')!='completed' for sh in s['shifts'].values()),
                 'Clock out the active shift before permanently removing this driver.',409)
+        require(not any(p.get('driver_id')==ident and p.get('status')=='scheduled'
+                        for p in s.get('return_collections',{}).values()),
+                'Reassign or cancel scheduled return pickups before removing this driver.',409)
         email=dr.get('email','').strip().lower()
         # Destroy account credentials and profile in the same transaction.
         # A returnee receives a new ID and must sign up, verify OTP and be
