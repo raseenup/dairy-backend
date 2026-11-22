@@ -9,6 +9,7 @@ import os
 import re
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
+from typing import Literal
 
 import httpx
 from fastapi import HTTPException, Request
@@ -24,7 +25,7 @@ COPY_KEYS = {
 }
 DEFAULT_SITE = {
     'copy':{}, 'blocks':[], 'media_id':'', 'media_fit':'cover',
-    'background_color':'#103f36','version':1
+    'background_color':'#103f36','hero_product_media':{},'version':1
 }
 UPI_PATTERN = re.compile(r'^[A-Za-z0-9._-]{2,80}@[A-Za-z0-9.-]{2,60}$')
 WORDS = re.compile(r'[a-z0-9]{3,}')
@@ -52,11 +53,16 @@ class SiteBlock(BaseModel):
     media_id: str = Field(default='',max_length=100)
     variant: str = Field(default='feature',pattern=r'^(feature|banner|quote|cta)$')
 
+HERO_PRODUCT_KEYS = ('milk','ghee','curd','butter')
+HERO_IMAGE_MIMES = {'image/jpeg','image/png','image/webp'}
+
 class SiteBody(BaseModel):
     model_config = ConfigDict(extra='forbid')
     copy: dict[str,str] = Field(default_factory=dict)
     blocks: list[SiteBlock] = Field(default_factory=list,max_length=24)
     media_id: str = Field(default='',max_length=100)
+    # Optional for older admin clients. An explicit map replaces all four slots.
+    hero_product_media: dict[Literal['milk','ghee','curd','butter'],str] | None = Field(default=None,max_length=4)
     media_fit: str = Field(default='cover',pattern=r'^(cover|contain)$')
     background_color: str = Field(default='#103f36',pattern=r'^#[A-Fa-f0-9]{6}$')
     version: int = Field(ge=1)
@@ -185,7 +191,17 @@ def site_view(state):
         item['media_type']=meta.get('mime_type','') if meta else ''
         item.pop('media_id',None)
         public_blocks.append(item)
-    return {'copy':site['copy'],'blocks':public_blocks,'media_url':'/media/campaign/'+media['id'] if media else '',
+    # Only approved images from the authenticated media library become public.
+    hero_images={}
+    for product, media_id in site.get('hero_product_media',{}).items():
+        if product not in HERO_PRODUCT_KEYS or not media_id:
+            continue
+        asset=state.get('campaign_media',{}).get(media_id)
+        if asset and asset.get('mime_type') in HERO_IMAGE_MIMES:
+            hero_images[product]={'url':'/media/campaign/'+asset['id'],
+                                  'mime_type':asset['mime_type']}
+    return {'copy':site['copy'],'blocks':public_blocks,'hero_product_images':hero_images,
+            'media_url':'/media/campaign/'+media['id'] if media else '',
             'media_type':media.get('mime_type','') if media else '',
             'media_fit':site['media_fit'],'background_color':site['background_color'],
             'version':site['version']}
@@ -254,7 +270,8 @@ def install_portal_features(app):
         with c.read_transaction() as state:
             editing_actor(state,request)
             return {**site_view(state), 'media_id':state.get('website_design',{}).get('media_id',''),
-                    'blocks':state.get('website_design',{}).get('blocks',[])}
+                    'blocks':state.get('website_design',{}).get('blocks',[]),
+                    'hero_product_media':state.get('website_design',{}).get('hero_product_media',{})}
 
     @app.patch('/admin/website',tags=['Website editor'])
     def update_website(request:Request,body:SiteBody):
@@ -273,8 +290,17 @@ def install_portal_features(app):
                     c.require(block['media_id'] in state['campaign_media'],'Upload section media first.',422)
                 block['title']=c.clean_text(block['title'],160)
                 block['body']=c.clean_text(block['body'],1400)
+            hero_media=old.get('hero_product_media',{}) if body.hero_product_media is None else body.hero_product_media
+            for product, media_id in hero_media.items():
+                c.require(product in HERO_PRODUCT_KEYS,'Unknown hero product.',422)
+                if media_id:
+                    asset=state.get('campaign_media',{}).get(media_id)
+                    c.require(bool(asset) and asset.get('mime_type') in HERO_IMAGE_MIMES,
+                              'Product hero requires a saved JPEG, PNG or WebP image.',422)
             updated={'copy':copy,'blocks':blocks,'media_id':body.media_id,'media_fit':body.media_fit,
-                     'background_color':body.background_color,'version':old['version']+1}
+                     'background_color':body.background_color,
+                     'hero_product_media':{key:value for key,value in hero_media.items() if value},
+                     'version':old['version']+1}
             state['website_design']=updated
             c.audit(state,user['email'],'WEBSITE_DESIGN_PUBLISHED')
             return site_view(state)
