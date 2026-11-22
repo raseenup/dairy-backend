@@ -133,6 +133,7 @@ class ResetExecute(BaseModel):
     ticket: str = Field(min_length=30, max_length=150)
     confirmation: str
     backup_acknowledged: bool = Field(strict=True)
+    inventory_acknowledged: bool = Field(strict=True)
 
 
 def install_prelaunch_reset(app):
@@ -199,6 +200,8 @@ def install_prelaunch_reset(app):
                       'The exact reset confirmation and archival export acknowledgement are required.', 422)
             details = overview(state)
             c.require(details['can_reset'], 'Reset is blocked by the current business safety checks.', 409)
+            c.require(body.inventory_acknowledged or not details['restore_stock'],
+                      'Review and confirm the product inventory restoration quantities before reset.', 422)
             for product_id, quantity in details['restore_stock'].items():
                 product = state['products'][product_id]
                 product['stock_quantity'] += quantity
