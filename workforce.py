@@ -166,6 +166,11 @@ def extend_snapshot(state,user,result,request):
             result['workforce']={}
             if may_manage(user):
                 from routing import route_plan
+                result['workforce']['overtime_requests'] = [
+                    dict(id=sh['id'], driver_name=sh['driver_name'], clock_in=sh['clock_in'],
+                         clock_out=sh['clock_out'], extra_seconds=sh['overtime_review']['extra_seconds'])
+                    for sh in state['shifts'].values() if sh.get('overtime_review', {}).get('status') == 'pending'
+                ]
                 result['workforce'].update(route_products=[{k:p.get(k,'') for k in ('id','name','unit')} for p in state['products'].values() if not p.get('deleted')],
                     drivers=[dict(id=d['id'],name=d['name'],email=d.get('email',''),approved=bool(d.get('approved')),
                     performance=performance(state,d['id']),documents=document_view(state,d['id']))
@@ -183,6 +188,11 @@ class StrictModel(BaseModel):
 class Preferences(StrictModel):
     dark_mode: bool=Field(strict=True)
     notification_sound: bool=Field(strict=True)
+
+class OvertimeDecision(StrictModel):
+    approved_seconds: int = Field(ge=0, strict=True)
+    note: str = Field(default='', max_length=500)
+
 
 class Delegates(StrictModel):
     driver_manager: bool=Field(strict=True)
@@ -275,6 +285,25 @@ def install_workforce(app):
             for item in c.mine(state,'notifications',user):
                 if item.get('portal','customer')==user['portal']:item['read']=True
             return {'message':'Notifications marked read.'}
+
+    @app.post('/admin/workforce/shifts/{shift_id}/overtime', tags=['Driver management'])
+    def decide_overtime(shift_id: str, request: Request, body: OvertimeDecision):
+        with c.transaction() as state:
+            reviewer = staff(state, request)
+            shift = state['shifts'].get(shift_id, {})
+            review = shift.get('overtime_review')
+            c.require(shift.get('status') == 'completed' and review, 'Overtime request not found.', 404)
+            c.require(reviewer['email'] != review['requested_by'], 'Another manager must review your hours.', 403)
+            c.require(body.approved_seconds <= review['extra_seconds'], 'Approved time exceeds the recorded extra time.', 422)
+            if review['status'] != 'pending':
+                c.require(review.get('reviewer_id') == reviewer['id'] and review['approved_seconds'] == body.approved_seconds
+                          and review.get('note','') == body.note.strip(), 'Another decision has already been recorded.', 409)
+            else:
+                review.update(status='approved' if body.approved_seconds else 'declined',
+                              approved_seconds=body.approved_seconds, reviewer_id=reviewer['id'],
+                              reviewed_at=c.now(), note=body.note.strip())
+                c.audit(state, reviewer['email'], 'SHIFT_OVERTIME_REVIEWED', shift_id)
+            return {'shift':c.shift_times(shift)}
 
     @app.patch('/admin/workforce/delegates/{user_id}',tags=['Driver management'])
     def delegates(user_id:str,request:Request,body:Delegates):

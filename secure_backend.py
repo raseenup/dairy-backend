@@ -21,6 +21,7 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Literal, Optional
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 import httpx
 import jwt
@@ -259,6 +260,7 @@ def challenge_request(request, body):
     cid=result.get('challenge_id')
     prepared=snapshot['challenges'].get(cid)
     if not prepared:return result  # Unknown reset account: generic response.
+    prepared['browser_portal'] = request.headers.get('x-fmv-portal')
     with transaction() as current:
         key=prepared['portal']+':'+prepared['email']
         user=prepared['pending'] or snapshot['users'].get(key)
@@ -409,31 +411,89 @@ def issue_challenge(s, u, purpose, pending=None, invitation=''):
             'server_time':sent_at,'resend_available_at':sent_at+60,'expires_at':sent_at+300}
 
 
-def session(s,u):
+PORTAL_HOSTS = {
+    'customer': 'https://customer.firstmilkventure.com',
+    'admin': 'https://admin.firstmilkventure.com',
+    'driver': 'https://delivery.firstmilkventure.com',
+}
+
+
+def browser_origins(allowed):
+    """Only exact portal origins may initiate or use a browser session."""
+    by_role = {}
+    for portal, primary in PORTAL_HOSTS.items():
+        configured = os.getenv('FMV_' + portal.upper() + '_ORIGINS', '').split(',')
+        candidates = {primary, 'https://backend.firstmilkventure.com', *(s.strip() for s in configured)}
+        by_role[portal] = {
+            origin for origin in allowed if
+            (origin in candidates and origin.startswith('https://')) or
+            (not PRODUCTION and urlsplit(origin).hostname in {'localhost', '127.0.0.1', '::1'})
+        }
+    return by_role
+
+
+def browser_origin_allowed(request, allowed):
+    portal = request.headers.get('x-fmv-portal')
+    origin = request.headers.get('origin')
+    # Same-origin GET/HEAD fetches can omit Origin. A browser supplies this
+    # Fetch Metadata header itself. The resulting origin still needs an exact match.
+    if origin is None and request.method in {'GET', 'HEAD'} and request.headers.get('sec-fetch-site') == 'same-origin':
+        origin = str(request.base_url).rstrip('/')
+    return origin in allowed.get(portal, set())
+
+
+def cookie_name(portal, sid):
+    return f'__Host-fmv-{portal}-{sid}'
+
+
+def check_challenge_portal(request, challenge):
+    require(request.headers.get('x-fmv-portal') == challenge.get('browser_portal'),
+            'Continue verification in the portal where you started.', 403)
+
+
+def session(s,u,*,browser=False):
     jti=uid('SES'); exp=int(time.time())+SESSION_SECONDS
-    s['sessions'][jti]={'email':u['email'],'portal':u['portal'],'expires':exp,'version':u.get('token_version',0)}
+    s['sessions'][jti]={'email':u['email'],'portal':u['portal'],'expires':exp,'version':u.get('token_version',0),'cookie_only':browser}
     token=jwt.encode({'sub':u['email'],'portal':u['portal'],'role':u['role'],'jti':jti,'exp':exp,
         'iat':int(time.time()),'iss':'first-milk-venture','aud':'fmv-portals'},SECRET,algorithm='HS256')
-    return dict(access_token=token,token_type='bearer',expires_in=SESSION_SECONDS,user=public_user(u))
+    return dict(access_token=token,token_type='bearer',session_id=jti,expires_in=SESSION_SECONDS,user=public_user(u))
+
+
+def session_claims(request):
+    browser_portal = request.headers.get('x-fmv-portal')
+    if browser_portal is None:
+        authorization = request.headers.get('authorization', '')
+        if not authorization.startswith('Bearer '):
+            status = 403 if request.headers.get('x-admin-key') or request.headers.get('x-driver-key') else 401
+            raise HTTPException(status, 'Sign in with password and email OTP.')
+        token = authorization[7:]
+    else:
+        sid = request.headers.get('x-fmv-session', '')
+        require(browser_portal in PORTAL_HOSTS and re.fullmatch(r'SES-[0-9a-f]{20}', sid),
+                'Sign in again.', 401)
+        token = request.cookies.get(cookie_name(browser_portal, sid), '')
+    try:
+        claims = jwt.decode(token, SECRET, algorithms=['HS256'], issuer='first-milk-venture',
+                            audience='fmv-portals', options={'require':['exp','iat','sub','jti','portal']})
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, 'Session expired or invalid. Sign in again.')
+    if browser_portal is not None:
+        require(claims['portal'] == browser_portal and claims['jti'] == sid,
+                'Session no longer matches this portal.', 401)
+    return claims
 
 
 def actor(s, request, portal=None, permission=None):
-    token=request.headers.get('authorization','')
-    if not token.startswith('Bearer '):
-        # Explicitly reject all legacy shared-key paths, including forged cached tokens.
-        raise HTTPException(403 if request.headers.get('x-admin-key') or request.headers.get('x-driver-key') else 401,'Sign in with password and email OTP.')
-    try:
-        p=jwt.decode(token[7:],SECRET,algorithms=['HS256'],issuer='first-milk-venture',audience='fmv-portals',
-            options={'require':['exp','iat','sub','jti','portal']})
-        sess=s['sessions'].get(p['jti']); u=s['users'].get(p['portal']+':'+p['sub'])
-        require(sess and u and u['approved'] and sess['expires']>time.time() and sess['version']==u.get('token_version',0), 'Session expired. Sign in again.',401)
-        require(u['portal']==sess['portal'] and u['email']==sess['email'],'Invalid session.',401)
-        if portal: require(u['portal']==portal,'This portal requires a different account role.',403)
-        if permission:
-            perms=PERMISSIONS.get(u['role'],set())
-            require('*' in perms or permission in perms,'Your role does not allow this action.',403)
-        return u,p['jti']
-    except jwt.InvalidTokenError: raise HTTPException(401,'Session expired or invalid. Sign in again.')
+    p = session_claims(request)
+    sess=s['sessions'].get(p['jti']); u=s['users'].get(p['portal']+':'+p['sub'])
+    require(sess and u and u['approved'] and sess['expires']>time.time() and sess['version']==u.get('token_version',0), 'Session expired. Sign in again.',401)
+    require(bool(sess.get('cookie_only')) == ('x-fmv-portal' in request.headers), 'Invalid session transport.', 401)
+    require(u['portal']==sess['portal'] and u['email']==sess['email'],'Invalid session.',401)
+    if portal: require(u['portal']==portal,'This portal requires a different account role.',403)
+    if permission:
+        perms=PERMISSIONS.get(u['role'],set())
+        require('*' in perms or permission in perms,'Your role does not allow this action.',403)
+    return u,p['jti']
 
 
 def mine(s,collection,u): return [v for v in s[collection].values() if v.get('owner')==u['email']]
@@ -548,10 +608,20 @@ def payment_captured(s,o,pid):
     audit(s,o['owner'],'PAYMENT_VERIFIED',o['id'])
 
 
+MAX_UNREVIEWED_WORK_SECONDS = 15 * 60 * 60
+
+
 def shift_times(sh):
     current=time.time();start=sh['started_epoch'];end=sh.get('ended_epoch') or current
     breaks=sh.get('break_seconds',0)+(end-sh['break_started'] if sh.get('break_started') else 0)
-    return dict(sh,work_seconds=max(0,int(end-start-breaks)),break_duration_seconds=int(breaks))
+    recorded = max(0, int(end-start-breaks))
+    review = sh.get('overtime_review', {})
+    # Closed historical shifts keep their recorded totals. All new long shifts
+    # enter review at clock-out, and live attendance never credits excess early.
+    credited = recorded
+    if sh['status'] != 'completed' or review:
+        credited = min(recorded, MAX_UNREVIEWED_WORK_SECONDS) + review.get('approved_seconds', 0)
+    return dict(sh, work_seconds=credited, recorded_work_seconds=recorded, break_duration_seconds=int(breaks))
 
 
 def sanitize_photo(data):
@@ -570,6 +640,9 @@ def sanitize_photo(data):
 def dispatch(s, request, body=None):
     path=request.scope['route'].path;method=request.method;params=request.path_params
     data=body.model_dump(exclude_unset=True) if isinstance(body,BaseModel) else (body or {})
+    browser_portal = request.headers.get('x-fmv-portal')
+    if browser_portal and path in {'/auth/signup', '/auth/signin', '/auth/password-reset/request', '/portal/auth/password-reset/request'}:
+        require(data.get('portal', 'customer') == browser_portal, 'Use the matching portal to sign in.', 403)
     if path=='/': return {'status':'online','service':'First Milk Venture Enterprise API','version':request.app.version,'country':'India','state':'Kerala','currency':'INR'}
     if path=='/config': return {'country':'India','state':'Kerala','currency':'INR','timezone':'Asia/Kolkata','online_payments':bool(os.getenv('RAZORPAY_KEY_ID') and os.getenv('RAZORPAY_KEY_SECRET'))}
     if path=='/auth/signup':
@@ -597,6 +670,7 @@ def dispatch(s, request, body=None):
     if path=='/auth/request-otp':
         ch=s['challenges'].get(body.challenge_id)
         require(ch and ch['expires']>time.time() and not ch.get('reset_verified'),'Verification expired. Start sign-in again.',400)
+        check_challenge_portal(request, ch)
         server_time = time.time()
         resend_available_at = ch['sent_at'] + 60
         if server_time < resend_available_at:
@@ -612,6 +686,7 @@ def dispatch(s, request, body=None):
         ch=s['challenges'].get(body.challenge_id)
         if not ch or ch['expires']<=time.time() or ch['attempts']>=5 or ch.get('reset_verified'):
             return JSONResponse({'detail':'Verification expired or locked. Start sign-in again.'},status_code=400)
+        check_challenge_portal(request, ch)
         digest=hmac.new(SECRET.encode(),(body.challenge_id+body.otp).encode(),'sha256').hexdigest()
         ch['attempts']+=1
         if not hmac.compare_digest(digest,ch['code_hash']):
@@ -639,7 +714,15 @@ def dispatch(s, request, body=None):
         del s['challenges'][body.challenge_id]
         audit(s,u['email'],'OTP_VERIFIED')
         if not u['approved']:return {'pending_approval':True,'message':'Application submitted successfully. You will receive an email notification once your driver profile has been approved.'}
-        return dict(session(s,u),message='Verification successful.')
+        data = dict(session(s, u, browser=bool(browser_portal)), message='Verification successful.')
+        if browser_portal is None:
+            return data
+        token = data.pop('access_token')
+        data.pop('token_type')
+        response = JSONResponse(data)
+        response.set_cookie(cookie_name(browser_portal, data['session_id']), token,
+                            max_age=SESSION_SECONDS, path='/', secure=True, httponly=True, samesite='strict')
+        return response
     if path in {'/portal/auth/password-reset/request','/auth/password-reset/request'}:
         email=str(data.get('email','')).strip().lower();portal=data.get('portal','customer')
         u=s['users'].get(portal+':'+email)
@@ -654,6 +737,7 @@ def dispatch(s, request, body=None):
         require(separator and proof and ch and ch['purpose']=='reset' and ch.get('reset_verified')
                 and ch['expires']>time.time() and hmac.compare_digest(
                     ch.get('reset_proof_hash', ''), hashlib.sha256(proof.encode()).hexdigest()), invalid_reset)
+        check_challenge_portal(request, ch)
         valid_password(data.get('new_password',''));u=s['users'][ch['portal']+':'+ch['email']]
         u['password_hash']=password_hash(data['new_password']);u['token_version']+=1
         del s['challenges'][challenge_id]
@@ -666,7 +750,12 @@ def dispatch(s, request, body=None):
     if path=='/auth/session':
         u,_=actor(s,request);return {'user':public_user(u),'revision':s['revision']}
     if path=='/auth/logout':
-        _,sid=actor(s,request);del s['sessions'][sid];return {'message':'Signed out.'}
+        _,sid = actor(s, request)
+        del s['sessions'][sid]
+        response = JSONResponse({'message':'Signed out.'})
+        if browser_portal:
+            response.delete_cookie(cookie_name(browser_portal, sid), path='/', secure=True, httponly=True, samesite='strict')
+        return response
     if path=='/sync':
         u,_=actor(s,request)
         return {'revision':s['revision'],'server_time':now(),'portal':u['portal']}
@@ -898,7 +987,12 @@ def driver_dispatch(s,u,r,d):
         if sh.get('break_started'):sh['break_seconds']+=time.time()-sh['break_started'];sh['break_started']=None
         if status=='on_break':sh['break_started']=time.time()
         sh['status']=status;sh['events'].append({'status':status,'at':now()})
-        if status=='completed':sh.update(clock_out=now(),ended_epoch=time.time(),odometer_end=d['odometer_end'])
+        if status=='completed':
+            sh.update(clock_out=now(),ended_epoch=time.time(),odometer_end=d['odometer_end'])
+            excess = shift_times(sh)['recorded_work_seconds'] - MAX_UNREVIEWED_WORK_SECONDS
+            if excess > 0:
+                sh['overtime_review'] = dict(status='pending', extra_seconds=excess, approved_seconds=0, requested_by=u['email'])
+                audit(s, u['email'], 'SHIFT_OVERTIME_REQUESTED', sh['id'])
         audit(s,u['email'],'SHIFT_'+status.upper(),sh['id']);return {'shift':shift_times(sh)}
     if p=='/driver/deliveries':
         day=r.query_params.get('delivery_date')
@@ -1110,11 +1204,9 @@ def install(app, legacy):
         '/portal/auth/sso/initiate','/admin/rbac/verify','/driver/verify-key'}
     origins=[x.strip() for x in os.getenv('ALLOWED_ORIGINS',','.join(legacy['ALLOWED_ORIGINS'])).split(',') if x.strip()]
     require('*' not in origins,'Use explicit ALLOWED_ORIGINS, never a wildcard.')
-    # Replace earlier CORS settings. No cookies or browser-supplied shared role keys are used.
+    trusted_portals = browser_origins(origins)
     from fastapi.middleware.cors import CORSMiddleware
     app.user_middleware=[]
-    app.add_middleware(CORSMiddleware,allow_origins=origins,allow_credentials=False,
-        allow_methods=['GET','POST','PATCH','DELETE','OPTIONS'],allow_headers=['Authorization','Content-Type','Idempotency-Key'],expose_headers=['Content-Disposition','Retry-After','X-Server-Time','X-Resend-Available-At','X-OTP-Expires-At'])
 
     @app.middleware('http')
     async def security_headers(request,call_next):
@@ -1124,6 +1216,8 @@ def install(app, legacy):
         if request.method not in {'GET','HEAD','OPTIONS'} and request.headers.get('origin'):
             origin=request.headers['origin'];own=str(request.base_url).rstrip('/')
             if origin not in origins and origin!=own:response=JSONResponse({'detail':'Origin is not allowed.'},status_code=403)
+        if 'x-fmv-portal' in request.headers and not browser_origin_allowed(request, trusted_portals):
+            response=JSONResponse({'detail':'This origin is not allowed for this portal.'},status_code=403)
         if response is None:
             try:
                 ip=request.client.host if request.client else 'unknown'
@@ -1136,7 +1230,7 @@ def install(app, legacy):
                         parsed=json.loads(raw);identifier=str(parsed.get('email') or parsed.get('identifier') or '').lower()
                         await asyncio.to_thread(rate_limit,'auth-account:'+hashlib.sha256(identifier.encode()).hexdigest(),8,300)
                     except (ValueError,AttributeError):pass
-                if request.url.path.startswith(('/admin/','/driver/')) and request.url.path not in public and request.method!='OPTIONS' and not request.headers.get('authorization','').startswith('Bearer '):
+                if request.url.path.startswith(('/admin/','/driver/')) and request.url.path not in public and request.method!='OPTIONS' and 'x-fmv-portal' not in request.headers and not request.headers.get('authorization','').startswith('Bearer '):
                     actor({'users':{},'sessions':{}},request)
                 response=await call_next(request)
             except HTTPException as e:response=JSONResponse({'detail':e.detail},status_code=e.status_code)
@@ -1146,6 +1240,12 @@ def install(app, legacy):
         if not request.url.path.startswith(('/customer/','/driver-portal/','/admin-portal/','/media/')):response.headers['Cache-Control']='no-store'
         if PRODUCTION:response.headers['Strict-Transport-Security']='max-age=31536000; includeSubDomains'
         return response
+
+    # Apply CORS to normal responses and authentication errors for the configured origins.
+    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
+        allow_methods=['GET','POST','PATCH','DELETE','OPTIONS'],
+        allow_headers=['Authorization','Content-Type','Idempotency-Key','X-FMV-Portal','X-FMV-Session'],
+        expose_headers=['Content-Disposition','Retry-After','X-Server-Time','X-Resend-Available-At','X-OTP-Expires-At'])
 
     def register(path,methods,model=None,tags=None):
         def endpoint(request,body=None):

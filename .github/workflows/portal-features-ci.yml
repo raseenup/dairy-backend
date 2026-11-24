@@ -26,4 +26,23 @@ jobs:
       - name: Compile all Python modules
         run: python -m compileall -q .
       - name: Run isolated new feature and security regressions
-        run: python -m pytest -q test_official_brand_email.py test_media_uploads.py test_return_quality.py test_return_collections.py test_password_policy_v14.py test_portal_features.py test_portal_v13.py test_secure_flows.py test_product_information.py
+        run: python -m pytest -q
+
+      - name: Observe public portal response headers
+        if: always()
+        shell: python
+        run: |
+          import subprocess
+          import urllib.error
+          import urllib.request
+          for role in ('customer', 'delivery', 'admin'):
+              host = role + '.firstmilkventure.com'
+              cname = subprocess.run(['dig', '+time=2', '+tries=1', '+short', 'CNAME', host],
+                                     capture_output=True, text=True).stdout.strip()
+              print(f'{host} CNAME {cname or "(no CNAME returned)"}')
+              try:
+                  with urllib.request.urlopen('https://' + host + '/', timeout=10) as page:
+                      for key in ('Server', 'Content-Security-Policy', 'Strict-Transport-Security'):
+                          print(f'  {key} = {page.headers.get(key, "(absent)")}')
+              except (OSError, urllib.error.URLError) as error:
+                  print(f'  Unable to read public response ({type(error).__name__})')

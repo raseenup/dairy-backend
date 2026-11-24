@@ -1,20 +1,7 @@
-# First Milk Venture — customer portal subdomain
+# First Milk Venture portal sessions
 
-Target customer portal origin: `https://customer.firstmilkventure.com`
+Deploy the API changes first and wait for the Render deployment to become healthy. Then release the three portals. People using an older portal session will sign in with their password and email code once. Previously issued API sessions retain their normal expiry.
 
-The backend's default `ALLOWED_ORIGINS` now includes the exact origin above. This allows the existing customer portal (with bearer-token authentication and OTP) to call `https://backend.firstmilkventure.com` from the new hostname. It does **not** weaken token validation, access control, database RLS, or permit arbitrary origins.
+The production customer, admin and delivery sites call `https://backend.firstmilkventure.com`. Include the three exact HTTPS portal origins in `ALLOWED_ORIGINS` along with other origins the existing services use. The browser API uses a Secure, HttpOnly, SameSite=Strict cookie on the API host and a separate per-tab session identifier. The server checks the portal origin, session and role. Keep the sites on the same HTTPS site for this configuration. For a separately named same-site staging portal, configure its exact origin in both `ALLOWED_ORIGINS` and `FMV_CUSTOMER_ORIGINS`, `FMV_ADMIN_ORIGINS` or `FMV_DRIVER_ORIGINS` and enable `browserCookies` in that portal's public configuration. Existing native API clients continue to support bearer authentication.
 
-**Important:** `secure_backend.py` reads the `ALLOWED_ORIGINS` environment variable, overriding defaults when it is set. If Render has this variable configured, add `https://customer.firstmilkventure.com` to the comma-separated list while retaining existing trusted admin/delivery/backend origins. Never use `*`.
-
-Suggested check after deployment:
-
-```sh
-curl -i -X OPTIONS 'https://backend.firstmilkventure.com/auth/signin' \
-  -H 'Origin: https://customer.firstmilkventure.com' \
-  -H 'Access-Control-Request-Method: POST' \
-  -H 'Access-Control-Request-Headers: authorization,content-type'
-```
-
-Confirm that the response allows the exact customer origin and that a request from an unapproved origin is denied. A successful CORS preflight does not mean authentication has been bypassed.
-
-DNS, TLS, GitHub Pages `CNAME` and Render static-site custom domains must be configured and verified separately. Do not switch the existing `www` hostname until the marketing site is ready to take traffic.
+Use test accounts to verify sign-in, sign-out, private downloads and each portal’s normal workflow before completing the rollout. Check the actual document response on each custom hostname for an enforcing Content-Security-Policy and Strict-Transport-Security. An HTML meta policy provides partial protection. HSTS and the CSP frame-ancestors directive require HTTP response headers.
