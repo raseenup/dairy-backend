@@ -159,6 +159,39 @@ def postgres_connect():
                     kwargs=kwargs, check=ConnectionPool.check_connection, open=True)
     return _pool.connection()
 
+def protect_private_postgres_tables():
+    """Apply the server-only policy before any newly initialized portal starts serving."""
+    if not DATABASE_URL:
+        return
+    from psycopg import sql
+    tables = ["application_state", "campaign_files", "campaign_upload_parts", "driver_private_files",
+              "order_chat_files", "product_media", "rate_limits"]
+    with postgres_connect() as conn:
+        # Concurrent workers can finish installing the same features at different times.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext('fmv_secure.install_table_policies'))")
+        rows = conn.execute("""
+            SELECT c.relname, c.relrowsecurity,
+                   to_regrole('anon') IS NOT NULL AND to_regrole('authenticated') IS NOT NULL
+                   AND NOT EXISTS (
+                       SELECT 1 FROM pg_catalog.pg_policy p
+                       WHERE p.polrelid = c.oid AND p.polname = 'fmv_block_direct_clients'
+                   ) AS needs_policy
+            FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'fmv_secure' AND c.relkind IN ('r', 'p')
+                  AND c.relname::text = ANY(%s::text[])
+            ORDER BY c.relname
+        """, (tables,)).fetchall()
+        for name, protected, needs_policy in rows:
+            table = sql.Identifier("fmv_secure", name)
+            if not protected:
+                conn.execute(sql.SQL("ALTER TABLE {} ENABLE ROW LEVEL SECURITY").format(table))
+            if needs_policy:
+                conn.execute(sql.SQL("""
+                    CREATE POLICY fmv_block_direct_clients ON {} AS RESTRICTIVE
+                    FOR ALL TO anon, authenticated USING (false) WITH CHECK (false)
+                """).format(table))
+
+
 @contextmanager
 def postgres_transaction():
     with postgres_connect() as conn:
@@ -1462,6 +1495,7 @@ def install(app, legacy):
     # Opt-in one-time pre-public-launch cleanup, super-admin only.
     from prelaunch_reset import install_prelaunch_reset
     install_prelaunch_reset(app)
+    protect_private_postgres_tables()
     app.version='13.4.0'
     from starlette.middleware.gzip import GZipMiddleware
     class APICompression:

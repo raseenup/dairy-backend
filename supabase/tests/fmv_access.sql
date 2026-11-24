@@ -1,6 +1,6 @@
 -- Read-only authorization regression. No customer row is read or mutated.
--- Run as the database owner after the two v13 migrations; all work rolls back.
-BEGIN;
+-- Run as the database owner after applying the app migrations. All checks roll back.
+BEGIN READ ONLY;
 SET LOCAL statement_timeout = '30s';
 DO $test$
 DECLARE
@@ -11,16 +11,23 @@ DECLARE
     first_column text;
     rejected boolean;
     starting_role text := current_user;
+    required_tables constant text[] := ARRAY[
+        'public.audit_logs','public.auth_otps','public.deliveries','public.delivery_audit_logs',
+        'public.driver_expenses','public.driver_shifts','public.drivers','public.offers',
+        'public.orders','public.products','public.subscriptions','public.users',
+        'fmv_secure.application_state','fmv_secure.campaign_files','fmv_secure.campaign_upload_parts',
+        'fmv_secure.driver_private_files','fmv_secure.order_chat_files','fmv_secure.product_media','fmv_secure.rate_limits'];
+    checked_tables text[] := ARRAY[]::text[];
     checks integer := 0;
 BEGIN
     FOR relation IN
         SELECT c.oid,n.nspname,c.relname,c.relrowsecurity
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
         WHERE c.relkind IN ('r','p') AND (n.nspname='fmv_secure' OR
-            (n.nspname='public' AND c.relname=ANY(ARRAY['users','products','subscriptions',
-             'orders','deliveries','offers','auth_otps','audit_logs','drivers','driver_shifts',
-             'delivery_audit_logs','driver_expenses'])))
+            (n.nspname || '.' || c.relname) = ANY(required_tables))
+        ORDER BY n.nspname,c.relname
     LOOP
+        checked_tables := array_append(checked_tables, relation.nspname || '.' || relation.relname);
         IF NOT relation.relrowsecurity THEN RAISE EXCEPTION 'RLS is disabled on %.%',relation.nspname,relation.relname; END IF;
         SELECT quote_ident(attname) INTO first_column FROM pg_attribute
             WHERE attrelid=relation.oid AND attnum>0 AND NOT attisdropped ORDER BY attnum LIMIT 1;
@@ -47,7 +54,10 @@ BEGIN
             END LOOP;
         END LOOP;
     END LOOP;
-    IF checks<>144 THEN RAISE EXCEPTION 'Expected 144 denied operations, checked %; review table inventory',checks; END IF;
+    IF NOT (required_tables <@ checked_tables) THEN
+        RAISE EXCEPTION 'Missing application tables: %',
+            ARRAY(SELECT unnest(required_tables) EXCEPT SELECT unnest(checked_tables));
+    END IF;
     IF has_function_privilege('anon','public.handle_new_user()','EXECUTE')
         OR has_function_privilege('authenticated','public.handle_new_user()','EXECUTE') THEN
         RAISE EXCEPTION 'Auth trigger function is callable by a client';
@@ -58,6 +68,7 @@ BEGIN
     -- The real server's verified postgres role still has normal access.
     PERFORM 1 FROM fmv_secure.application_state WHERE id=1;
     IF NOT FOUND THEN RAISE EXCEPTION 'Application state is missing'; END IF;
+    RAISE NOTICE 'Verified % denied role/operation combinations on % tables', checks, cardinality(checked_tables);
 END $test$;
 ROLLBACK;
-SELECT 'Passed: 144 client operations denied; server state and Auth trigger access retained' AS result;
+SELECT 'Passed: required tables are present, client access is denied, and server and Auth trigger access is retained' AS result;

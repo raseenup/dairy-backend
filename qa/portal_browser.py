@@ -223,12 +223,19 @@ def main():
             state["invites"][hashlib.sha256(invitation.encode()).hexdigest()] = {
                 "email": EMAILS["admin"], "role": "super_admin", "expires": time.time() + 900, "used": False}
         with psycopg.connect(dsn) as db:
-            assert db.execute("""
-                SELECT c.relrowsecurity, p.polpermissive, pg_get_expr(p.polqual, c.oid),
-                       pg_get_expr(p.polwithcheck, c.oid)
-                FROM pg_class c JOIN pg_policy p ON p.polrelid=c.oid
-                WHERE c.oid='fmv_secure.campaign_upload_parts'::regclass AND p.polname='fmv_block_direct_clients'
-            """).fetchone() == (True, False, "false", "false")
+            rows = db.execute("""
+                SELECT c.relname, c.relrowsecurity, p.polpermissive,
+                       pg_get_expr(p.polqual, c.oid), pg_get_expr(p.polwithcheck, c.oid),
+                       p.polroles @> ARRAY[to_regrole('anon')::oid, to_regrole('authenticated')::oid]
+                FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                LEFT JOIN pg_policy p ON p.polrelid=c.oid AND p.polname='fmv_block_direct_clients'
+                WHERE n.nspname='fmv_secure' AND c.relkind IN ('r','p')
+            """).fetchall()
+            assert {row[0] for row in rows} == {
+                "application_state", "campaign_files", "campaign_upload_parts", "driver_private_files",
+                "order_chat_files", "product_media", "rate_limits"}
+            assert all(row[1:] == (True, False, "false", "false", True) for row in rows)
+            print("PASS all seven private tables protected on a fresh install", flush=True)
         with serve_locally(app, directory) as port, sync_playwright() as playwright:
             chrome = shutil.which("google-chrome") or shutil.which("chromium")
             assert chrome, "A local Chrome or Chromium installation is required"
