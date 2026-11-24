@@ -5,7 +5,7 @@ services:
     runtime: static
     repo: https://github.com/raseenup/firstmilk-customer
     branch: main
-    buildCommand: mkdir -p public-portal && cp index.html manifest.webmanifest *.js *.css public-portal/ && cp -R assets styles public-portal/
+    buildCommand: node android-app/scripts/stage.mjs --web
     staticPublishPath: ./public-portal
     domains:
       - customer.firstmilkventure.com
@@ -33,7 +33,7 @@ services:
     runtime: static
     repo: https://github.com/raseenup/firstmilk-delivery
     branch: main
-    buildCommand: mkdir -p public-portal && cp index.html manifest.webmanifest *.js *.css public-portal/ && cp -R assets styles public-portal/
+    buildCommand: node android-app/scripts/stage.mjs --web
     staticPublishPath: ./public-portal
     domains:
       - delivery.firstmilkventure.com
@@ -61,7 +61,7 @@ services:
     runtime: static
     repo: https://github.com/raseenup/firstmilk-admin
     branch: main
-    buildCommand: mkdir -p public-portal && cp index.html manifest.webmanifest *.js *.css public-portal/ && cp -R assets styles public-portal/
+    buildCommand: node android-app/scripts/stage.mjs --web
     staticPublishPath: ./public-portal
     domains:
       - admin.firstmilkventure.com
