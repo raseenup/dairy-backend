@@ -63,16 +63,7 @@ def scoped_request(request, path):
 def sync_status(request:Request):
     """Read only this session, user and revision, excluding the full state body."""
     c = core()
-    import jwt
-    authorization = request.headers.get('authorization', '')
-    if not authorization.startswith('Bearer '):
-        c.actor({'users':{}, 'sessions':{}}, request)
-    try:
-        claims = jwt.decode(authorization[7:], c.SECRET, algorithms=['HS256'],
-            issuer='first-milk-venture', audience='fmv-portals',
-            options={'require':['exp','iat','sub','jti','portal']})
-    except jwt.InvalidTokenError:
-        raise HTTPException(401, 'Session expired or invalid. Sign in again.')
+    claims = c.session_claims(request)
     key = claims['portal'] + ':' + claims['sub']
     if c.DATABASE_URL:
         with c.postgres_connect() as conn:

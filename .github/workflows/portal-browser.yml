@@ -1,0 +1,65 @@
+name: First Milk portal browser integration
+on:
+  pull_request:
+    paths:
+      - '*.py'
+      - 'qa/portal_browser.py'
+      - 'infra/portal-hosting.yaml'
+      - 'migration_v8_security.sql'
+      - 'supabase/migrations/**'
+      - '.github/workflows/portal-browser.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: fmv_portal_qa
+          POSTGRES_PASSWORD: fmv-local-test
+        ports:
+          - 5432/tcp
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dairy-backend
+          persist-credentials: false
+      # Integration baselines for the coordinated portal release. Pin updates to reviewed revisions.
+      - uses: actions/checkout@v4
+        with:
+          repository: raseenup/firstmilk-admin
+          ref: c8176346e03ae83db43e17eac709187be838755d
+          path: firstmilk-admin
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: raseenup/firstmilk-customer
+          ref: bdfb49b5599f232544ef4b7180c40d6f50a0ec95
+          path: firstmilk-customer
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: raseenup/firstmilk-delivery
+          ref: bb0029e4218fd27f04ebbff3ca577826a5955013
+          path: firstmilk-delivery
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Stage each portal and install the browser test dependencies
+        run: |
+          for repo in firstmilk-admin firstmilk-customer firstmilk-delivery; do
+            (cd "$repo" && node android-app/scripts/stage.mjs --web)
+          done
+          python -m pip install -r dairy-backend/requirements.txt playwright PyYAML
+      - name: Verify HTTPS sessions, authorized media and dispatch with synthetic accounts
+        env:
+          FMV_QA_POSTGRES_PORT: ${{ job.services.postgres.ports[5432] }}
+        run: python dairy-backend/qa/portal_browser.py

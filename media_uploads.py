@@ -129,11 +129,27 @@ def collect_mime(raw:bytes, filename:str):
 
 def install_large_promotion_media(app):
     with conn() as con:
+        if c.DATABASE_URL:
+            # Serialize first-time creation across workers. Upload requests do not take this lock.
+            con.execute("SELECT pg_advisory_xact_lock(hashtext('fmv.campaign_upload_parts.setup'))")
         con.execute('CREATE TABLE IF NOT EXISTS '+chunk_table()+
             ' (upload_id TEXT NOT NULL, sequence INTEGER NOT NULL, content '+
             ('BYTEA' if c.DATABASE_URL else 'BLOB')+
             ' NOT NULL, digest TEXT NOT NULL, created_epoch DOUBLE PRECISION NOT NULL, '+
             'PRIMARY KEY (upload_id,sequence))')
+        if c.DATABASE_URL:
+            protected, needs_policy = con.execute("""
+                SELECT c.relrowsecurity, to_regrole('anon') IS NOT NULL
+                    AND to_regrole('authenticated') IS NOT NULL AND NOT EXISTS (
+                        SELECT 1 FROM pg_catalog.pg_policy p
+                        WHERE p.polrelid=c.oid AND p.polname='fmv_block_direct_clients')
+                FROM pg_catalog.pg_class c WHERE c.oid='fmv_secure.campaign_upload_parts'::regclass
+            """).fetchone()
+            if not protected:
+                con.execute('ALTER TABLE fmv_secure.campaign_upload_parts ENABLE ROW LEVEL SECURITY')
+            if needs_policy:
+                con.execute("""CREATE POLICY fmv_block_direct_clients ON fmv_secure.campaign_upload_parts
+                               AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false) WITH CHECK (false)""")
     with c.transaction() as state:
         state.setdefault('campaign_upload_sessions',{})
 

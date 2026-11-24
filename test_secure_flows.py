@@ -521,3 +521,99 @@ def test_competing_pending_signups_cannot_claim_same_mobile(portal, monkeypatch)
         assert state['users'][portal + ':' + winner[0]] == saved_user
         assert len(state['users']) == 1
         assert state['challenges'][loser[1]]['attempts'] == 1
+
+
+@pytest.mark.parametrize('portal,host', [('customer','customer'),('admin','admin'),('driver','delivery')])
+def test_browser_cookie_session_otp_restore_sync_and_logout(portal, host):
+    # Use the ordinary account setup, including a driver's approval and an admin invitation.
+    email = f'{portal}.browser@example.com'
+    account(email=email, portal=portal)
+    origin = f'https://{host}.firstmilkventure.com'
+    headers = {'Origin':origin, 'X-FMV-Portal':portal}
+    with TestClient(app, base_url='https://backend.firstmilkventure.com') as browser:
+        preflight = browser.options('/auth/session', headers={
+            'Origin':origin, 'Access-Control-Request-Method':'GET',
+            'Access-Control-Request-Headers':'x-fmv-portal,x-fmv-session'})
+        assert preflight.status_code == 200
+        assert preflight.headers['Access-Control-Allow-Origin'] == origin
+        assert preflight.headers['Access-Control-Allow-Credentials'] == 'true'
+        challenge = browser.post('/auth/signin', headers=headers, json={
+            'identifier':email, 'password':PASSWORD, 'portal':portal}).json()['challenge_id']
+        payload = {'challenge_id':challenge, 'otp':otp_for(challenge)}
+        assert browser.post('/auth/verify-otp', json=payload).status_code == 403
+        result = browser.post('/auth/verify-otp', headers=headers, json=payload)
+        assert result.status_code == 200
+        grant = result.json()
+        assert 'access_token' not in grant and grant['user']['portal'] == portal
+        sid = grant['session_id']
+        attributes = {item.strip().lower() for item in result.headers['set-cookie'].split(';')[1:]}
+        assert {'secure','httponly','samesite=strict','path=/'} <= attributes
+        assert not any(attr.startswith('domain=') for attr in attributes)
+        assert browser.cookies.get(sec.cookie_name(portal, sid))
+        scoped = {**headers, 'X-FMV-Session':sid}
+        assert browser.get('/auth/session', headers=scoped).json()['user']['email'] == email
+        assert browser.get('/sync', headers=scoped).json()['portal'] == portal
+        assert browser.get('/portal/snapshot', headers=scoped).json()['user']['portal'] == portal
+        assert browser.get('/auth/session', headers=headers).status_code == 401
+        assert browser.get('/auth/session', headers={'Origin':origin}).status_code == 401
+        assert browser.get('/auth/session', headers={**scoped,'Origin':'https://www.firstmilkventure.com'}).status_code == 403
+        assert browser.get('/auth/session', headers={**scoped,'X-FMV-Session':'SES-'+'0'*20}).status_code == 401
+        assert browser.get('/auth/session', headers={'Sec-Fetch-Site':'same-origin','X-FMV-Portal':portal,'X-FMV-Session':sid}).status_code == 200
+        assert browser.post('/auth/logout', headers={'X-FMV-Portal':portal, 'X-FMV-Session':sid}).status_code == 403
+        assert browser.post('/auth/logout', headers=scoped).status_code == 200
+        assert browser.cookies.get(sec.cookie_name(portal, sid)) is None
+        with sec.read_transaction() as state:
+            assert sid not in state['sessions']
+        assert browser.get('/sync', headers=scoped).status_code == 401
+
+
+def test_browser_registration_preserves_signup_and_reset_binding():
+    headers = {'Origin':'https://customer.firstmilkventure.com','X-FMV-Portal':'customer'}
+    with TestClient(app, base_url='https://backend.firstmilkventure.com') as browser:
+        form = dict(email='browser.signup@example.com', phone='9876543210', password=PASSWORD,
+                    full_name='Portal User', address='Test address', portal='customer')
+        assert browser.post('/auth/signup', headers={**headers,'X-FMV-Portal':'admin'}, json=form).status_code == 403
+        challenge = browser.post('/auth/signup', headers=headers, json=form).json()['challenge_id']
+        grant = browser.post('/auth/verify-otp', headers=headers,
+                             json={'challenge_id':challenge,'otp':otp_for(challenge)}).json()
+        sid = grant['session_id']
+        reset = browser.post('/auth/password-reset/request', headers=headers,
+                             json={'email':form['email'],'portal':'customer'}).json()['challenge_id']
+        proof = browser.post('/auth/verify-otp', headers=headers,
+                             json={'challenge_id':reset,'otp':otp_for(reset)}).json()['reset_token']
+        update = {'reset_token':proof, 'new_password':'NewExamplePassword456!'}
+        assert browser.post('/auth/password-reset/confirm', json=update).status_code == 403
+        assert browser.post('/auth/password-reset/confirm', headers=headers, json=update).status_code == 200
+        assert browser.get('/auth/session', headers={**headers,'X-FMV-Session':sid}).status_code == 401
+
+
+def test_manager_reviews_excess_shift_time_without_blocking_clockout():
+    driver, driver_user = account('shift.driver@example.com','driver')
+    admin, _ = account('shift.admin@example.com','admin')
+    delegate, delegate_user = account('shift.support@example.com','admin',phone='9876543201',role='customer_support')
+    with sec.transaction() as state:
+        shift_id = 'SHIFT-example'
+        start = time.time() - 17 * 3600
+        state['shifts'][shift_id] = dict(id=shift_id,driver_id=driver_user['id'],driver_name='Test Driver',
+            vehicle_plate='QA',status='active',clock_in=sec.now(),started_epoch=start,odometer_start=0,
+            break_seconds=3600,break_started=None,events=[])
+    response = client.patch('/driver/shifts/'+shift_id,headers=driver,json={'status':'completed','odometer_end':8})
+    assert response.status_code == 200
+    shift = response.json()['shift']
+    assert shift['status'] == 'completed' and shift['work_seconds'] == 15 * 3600
+    assert shift['overtime_review']['status'] == 'pending'
+    assert 3600 <= shift['overtime_review']['extra_seconds'] < 3660
+    review_path = '/admin/workforce/shifts/'+shift_id+'/overtime'
+    decision = {'approved_seconds':1800, 'note':'Verified 30 extra minutes.'}
+    assert client.post(review_path,headers=driver,json=decision).status_code == 403
+    assert client.post(review_path,headers=delegate,json=decision).status_code == 403
+    client.patch('/admin/workforce/delegates/'+delegate_user['id'],headers=admin,
+                 json={'driver_manager':True,'payout_approver':False}).raise_for_status()
+    pending = client.get('/portal/snapshot?workforce=true',headers=delegate).json()['workforce']['overtime_requests']
+    assert [item['id'] for item in pending] == [shift_id]
+    assert client.post(review_path,headers=delegate,json={'approved_seconds':7200}).status_code == 422
+    for _ in range(2):
+        saved = client.post(review_path,headers=delegate,json=decision)
+        assert saved.status_code == 200 and saved.json()['shift']['work_seconds'] == 15 * 3600 + 1800
+    assert client.post(review_path,headers=admin,json={'approved_seconds':0}).status_code == 409
+    assert client.get('/driver/shifts',headers=driver).json()['shifts'][0]['overtime_review']['status'] == 'approved'
