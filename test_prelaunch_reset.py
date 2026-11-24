@@ -59,6 +59,9 @@ def test_financial_obligations_block_reset(armed, key):
 def test_progressed_deliveries_block_reset(armed, status):
     data = demo()
     data['orders']['ORDER1']['status'] = status
+    if status == 'Assigned':
+        # Dispatch can reassign a previously started order back to Assigned.
+        data['audit'].append({'event':'DELIVERY_IN TRANSIT','object_id':'ORDER1'})
     assert not overview(data)['can_reset']
 
 
@@ -243,3 +246,16 @@ def test_reset_rejects_a_state_change_after_prepare(armed, monkeypatch):
     })
     assert response.status_code == 409
     assert state['orders'] and not state.get('prelaunch_reset_completed')
+
+
+@pytest.mark.parametrize('evidence', ['fulfillment_started_at','delivery_attempts','overtime_review'])
+def test_reset_preserves_operations_with_history(armed, evidence):
+    state = demo()
+    state['orders']['ORDER1']['status'] = 'Assigned'
+    if evidence == 'fulfillment_started_at':
+        state['orders']['ORDER1'][evidence] = '2026-01-01T10:00:00+05:30'
+    elif evidence == 'delivery_attempts':
+        state[evidence] = {'ATTEMPT1':{'order_id':'ORDER1'}}
+    else:
+        state['shifts'] = {'SHIFT1':{'status':'completed','overtime_review':{'status':'pending'}}}
+    assert not overview(state)['can_reset']

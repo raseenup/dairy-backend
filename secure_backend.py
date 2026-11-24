@@ -1025,6 +1025,7 @@ def driver_dispatch(s,u,r,d):
             transitions={'Assigned':{'Picked Up','In Transit','Arrived','Failed'},'Picked Up':{'In Transit','Arrived','Failed'},'In Transit':{'Arrived','Failed'},'Arrived':{'Failed'}}
             require(status in transitions.get(o['status'],set()),'Invalid delivery status transition.',409)
             o.update(status=status,notes=clean_text(d.get('notes','')),failure_reason=clean_text(d.get('failure_reason','')))
+        o.setdefault('fulfillment_started_at',now())
         notify(s,o['owner'],'Delivery updated',f"{o['id']}: {o['status']}")
         from experience import queue_order_email
         event={'Picked Up':'shipped','In Transit':'out_for_delivery','Arrived':'out_for_delivery','Delivered':'delivered'}.get(status)

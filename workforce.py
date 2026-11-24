@@ -327,6 +327,7 @@ def install_workforce(app):
             note=c.clean_text(body.note,1000);c.require(note,'Explain the failed attempt.',422)
             item=dict(id=c.uid('ATTEMPT'),order_id=order_id,driver_id=user['id'],reason=body.reason,note=note,
                 created_at=c.now(),request_key=key,fingerprint=fingerprint)
+            order.setdefault('fulfillment_started_at',item['created_at'])
             state['delivery_attempts'][item['id']]=item
             notify_managers(state,'Failed delivery attempt',order_id+': '+body.reason)
             c.notify(state,order['owner'],'Delivery attempt unsuccessful',body.reason+'. Dispatch will arrange the next step.')

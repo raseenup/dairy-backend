@@ -89,8 +89,17 @@ def overview(state):
         reasons.append('Server reset is not armed. Set FMV_ENABLE_PRELAUNCH_RESET=true and FMV_LAUNCH_STAGE=prelaunch for one controlled launch cleanup.')
     if state.get('prelaunch_reset_completed'):
         reasons.append('The one-time pre-launch reset has already been completed.')
+    delivery_events = {'DELIVERY_PICKED UP','DELIVERY_IN TRANSIT','DELIVERY_ARRIVED',
+                       'DELIVERY_DELIVERED','DELIVERY_FAILED','DELIVERY_ATTEMPT_FAILED'}
+    progressed = {entry.get('object_id') for entry in state.get('audit', []) if entry.get('event') in delivery_events}
+    if state.get('delivery_attempts'):
+        reasons.append('Driver delivery attempts have been recorded and must be retained.')
+    if any(sh.get('overtime_review') for sh in state.get('shifts', {}).values()):
+        reasons.append('Attendance review records must be retained.')
     for order in state.get('orders', {}).values():
-        if order.get('status') not in {'Unassigned', 'Assigned', 'Awaiting Payment', 'Cancelled'}:
+        if (order.get('status') not in {'Unassigned', 'Assigned', 'Awaiting Payment', 'Cancelled'}
+                or order.get('fulfillment_started_at') or order.get('delivered_time') or order.get('epod_photo_url')
+                or order.get('id') in progressed):
             reasons.append('A delivery has progressed beyond pre-dispatch. Complete or archive real operations separately.')
             break
         if (order.get('provider_order_id') or order.get('provider_payment_id')
